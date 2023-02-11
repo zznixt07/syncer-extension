@@ -1,0 +1,45 @@
+{
+    "name": "Syncer",
+    "version": "1.0.0",
+    "description": "Sync video with each other using a 3rd party facilitating/communication server.",
+    "manifest_version": 3,
+    "content_scripts": [
+        {
+            "matches": [
+                "*://*/*"
+            ],
+            "run_at": "document_idle",
+            "js": [
+                "content-script.js"
+            ]
+        }
+    ],
+    "action": {
+        "default_icon": "icon.png",
+        "default_title": "Popup title",
+        "default_popup": "popup.html"
+    },
+    "background": {
+        "service_worker": "background.js",
+        "type": "module"
+    },
+    "permissions": [
+        "storage"
+    ],
+    "host_permissions": [
+        "<all_urls>"
+    ],
+    "web_accessible_resources": [
+        {
+            "resources": [
+                "lib/socket.io.min.js"
+            ],
+            "matches": [
+                "*://*/*"
+            ]
+        }
+    ],
+    "icons": {
+        "128": "icon.png"
+    }
+}
