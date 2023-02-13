@@ -58,6 +58,55 @@
 		}
 	}
 
+	const getAudioStateSpotify = () => {
+		const currentSongURL = document.querySelector('.Root__now-playing-bar [data-testid="now-playing-widget"] a[data-testid="context-link"]')
+		if (!currentSongURL) {
+			return
+		}
+
+		/* extract current songs URI and the playlist's ID it is in. */
+		const parsedURL = new URL(currentSongURL)
+		const isPrivatePlaylist = parsedURL.pathname.test(/\/user\/.+\/collection\/.+$/)
+		if (isPrivatePlaylist) {
+			return
+		}
+		const matches = parsedURL.pathname.match(/\/(.+)\/(.+)$/)
+		if (!matches) {
+			return
+		}
+		const playlistID = matches[2]
+		const songURI = parsedURL.searchParams.get('uri')
+		if (!songURI) {
+			return
+		}
+
+		const playbackBarElem = document.querySelector('.playback-bar [type="range"]')
+		if (!playbackBarElem) {
+			return
+		}
+
+		const playerBtn = document.querySelector('[data-testid="control-button-playpause"]')
+		let playState = 'play'
+		if (playerBtn) {
+			playState = (playerBtn.ariaLabel === 'Play') ? 'pause' : 'play'
+		}
+		const timestamp = playbackBarElem.value
+		const duration = playbackBarElem.max
+
+		return {
+			nodeId: 43,
+			service: 'spotify',
+			meta: {
+				'playlistID': playlistID,
+				'songURI': songURI
+			},
+			timestamp: timestamp,
+			state: playState,
+			tms: new Date().getTime(),
+			duration: duration
+		}
+	}
+
 	const requestEventFromOwner = (roomName) => {
 		sendMessageToBG({
 			type: 'sync_room_data',

@@ -31,7 +31,7 @@ const data = {
         'playlistID': playlistID,
         'songURI': songURI
     },
-    seekSecs: 53
+    timestamp: 53
 }
 
 
@@ -101,6 +101,6 @@ if (!seekFn) {
 
 const currentSongTotalDurationSecs = correspondingProps?.max
 // between [0 - 1] Example: 0.2 means seek to 20%
-const percentageFracToSeekTo = recv.seekSecs / currentSongTotalDurationSecs
+const percentageFracToSeekTo = recv.timestamp / currentSongTotalDurationSecs
 
 seekFn(percentageFracToSeekTo, {})
