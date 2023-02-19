@@ -6,6 +6,7 @@ const getCurrentTabId = async () => {
 }
 
 const sendMessageToCurrTab = async (type, roomName) => {
+	// console.log(`Sending message to current tab: ${type}`);
 	let res
 	try {
 		res = await chrome.tabs.sendMessage(await getCurrentTabId(), {
@@ -15,8 +16,9 @@ const sendMessageToCurrTab = async (type, roomName) => {
 	} catch (e) {
 		fail(`Failed on type: ${type}`)
 		fail(e.toString())
-		res = null
+		res = {}
 	}
+	console.log(`got resp from curr tab: ${res}`);
 	return res
 }
 
@@ -90,7 +92,7 @@ listRoomsBtn.addEventListener('click', async (e) => {
 	setIsLoading(target, true)
 	const currRoomName = document.getElementById('new-room-name').value
 	const result = await sendMessageToCurrTab('list_rooms', currRoomName)
-	if (result.success) {
+	if (result?.success) {
 		const dataList = document.getElementById('rooms')
 		const roomList = document.querySelector('pre#rooms-list')
 		dataList.innerHTML = ''
@@ -107,7 +109,7 @@ listRoomsBtn.addEventListener('click', async (e) => {
 			roomList.textContent += room + '\n'
 		})
 	} else {
-		fail(result.data.message)
+		fail(result?.data?.message)
 	}
 	setIsLoading(target, false)
 })
@@ -116,10 +118,10 @@ createRoomBtn.addEventListener('click', async (e) => {
 	target.disabled = true
 	const currRoomName = document.getElementById('new-room-name').value
 	const result = await sendMessageToCurrTab('create_room', currRoomName)
-	if (result.success) {
+	if (result?.success) {
 		success(result.data.message)
 	} else {
-		fail(result.data.message)
+		fail(result?.data?.message)
 	}
 	target.disabled = false
 })
@@ -128,10 +130,10 @@ joinRoomBtn.addEventListener('click', async (e) => {
 	setIsLoading(target, true)
 	const currRoomName = document.getElementById('new-room-name').value
 	const result = await sendMessageToCurrTab('join_room', currRoomName)
-	if (result.success) {
+	if (result?.success) {
 		success(result.data.message)
 	} else {
-		fail(result.data.message)
+		fail(result?.data?.message)
 	}
 	setIsLoading(target, false)
 })
@@ -140,10 +142,10 @@ leaveRoomBtn.addEventListener('click', async (e) => {
 	setIsLoading(target, true)
 	const currRoomName = document.getElementById('new-room-name').value
 	const result = await sendMessageToCurrTab('leave_room', currRoomName)
-	if (result.success) {
+	if (result?.success) {
 		success(result.data.message)
 	} else {
-		fail(result.data.message)
+		fail(result?.data?.message)
 	}
 	setIsLoading(target, false)
 })

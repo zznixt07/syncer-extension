@@ -32,7 +32,8 @@
     "web_accessible_resources": [
         {
             "resources": [
-                "lib/socket.io.min.js"
+                "lib/socket.io.min.js",
+                "main-content-script.js"
             ],
             "matches": [
                 "*://*/*"

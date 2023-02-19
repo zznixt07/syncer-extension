@@ -153,9 +153,9 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
 	// if u want to use await, do not use async function as event listener fn.
 	// instead use an async IIFE inside the event listener and return true from the event listener;
 	; (async () => {
-		if (message === 'ping') {
-			// log('sending pong')
-			reply('pong')
+		log('message received', message)
+		if (!message) {
+			reply({})
 		} else if (message.type === 'set_prev_room') {
 			await chrome.storage.sync.set({ [STORAGE_KEY]: message.data })
 			reply()
@@ -225,3 +225,4 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
 	})()
 	return true
 })
+  

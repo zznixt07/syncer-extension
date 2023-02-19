@@ -1,6 +1,85 @@
+// ; (() => {
+    const script = document.createElement('script')
+    script.src = chrome.runtime.getURL('main-content-script.js')
+    // assign type module so importing is allowed.
+    script.type = "module"
+    script.onload = function () {
+        this.remove()
+    }
+    ; (document.head || document.documentElement).appendChild(script)
 
-; (async () => {
-	/*
+    const ORIGIN = 'https://open.spotify.com'
+    const log = (...msgs) => {
+        console.log('CS:', ...msgs)
+    }
+
+    const sendMessageToBG = async (message) => {
+		const resp = await chrome.runtime.sendMessage(message)
+		return resp
+    }
+
+    const getServerAddress = async () => {
+		// log('getting server address')
+		return await sendMessageToBG({ type: 'get_server_address' })
+	}
+
+    window.addEventListener('message', async (event) => {
+        if (event.source !== window || event.data.type === 'syncer-extension-mcs-to-bg') {
+            // log('send msg to bg from CS', event.data.data)
+            const resp = await chrome.runtime.sendMessage(event.data.data)
+            // log('resep from bg to CS', resp)
+            event.ports[0].postMessage(resp)
+        }
+    })
+
+    // send message to script injected in the page (MAIN world)
+    const sendMessageToMCS = async (message) => {
+        return new Promise((resolve) => {
+            const channel = new MessageChannel() 
+            channel.port1.onmessage = (event) => {
+                channel.port1.close()
+                resolve(event.data)
+            }
+            window.postMessage({type: 'syncer-extension-bg-to-mcs', data: message}, '*', [channel.port2])
+        })
+        
+    }
+    
+    // messages sent from background script using `tabs.sendMessage()`
+    chrome.runtime.onMessage.addListener((message, sender, reply) => {
+        // console.log('tab.sendMessage', message)
+		// do not use async function if u want to return value after awaiting.
+		// instead use an async IIFE and use return true;
+        ; (async () => {
+            if (message.type === 'get_server_address') {
+                const result = await getServerAddress()
+                reply(result)
+                return
+            }
+            else if (message.type === 'set_server_address') {
+                const result = await sendMessageToBG({ type: message.type, data: message.roomName })
+                reply(result)
+                return
+            }
+            // else if (message.type === 'get_prev_room_from_storage') {
+            //     const result = await getPrevRoomFromLS()
+            //     reply(result)
+            //     return
+            // } else if (message.type === 'remove_prev_room_from_storage') {
+            //     removePrevRoomFromLS()
+            //     reply(result)
+            //     return
+            // }
+            else {
+                const resp = await sendMessageToMCS(message)
+                reply(resp)
+            }
+        })()
+		return true
+        // reply({})
+    })
+
+    /*
 	------ a HACK to make service workers persistent --------
 	Thx wOxxOm. Source: https://stackoverflow.com/a/66618269/12091475
 	*/
@@ -15,422 +94,4 @@
 	}
 	connect();
 	// </Hack>
-
-	const log = (...msg) => {
-		console.log('CS:', ...msg)
-	}
-	const setPrevRoomInLS = async (roomName) => {
-		// localStorage.setItem(STORAGE_KEY, roomName)
-		await sendMessageToBG({ type: 'set_prev_room', data: roomName })
-	}
-
-	const getPrevRoomFromLS = async () => {
-		// return localStorage.getItem(STORAGE_KEY)
-		return await sendMessageToBG({ type: 'get_prev_room' })
-	}
-
-	const removePrevRoomFromLS = async () => {
-		// localStorage.removeItem(STORAGE_KEY)
-		await sendMessageToBG({ type: 'remove_prev_room' })
-	}
-
-	const getServerAddress = async () => {
-		// log('getting server address')
-		return await sendMessageToBG({ type: 'get_server_address' })
-	}
-
-	const getVideoCurrentState = (data) => {
-		return {
-			nodeId: 42,
-			timestamp: VID_ELEM?.currentTime || 0,
-			videoState: data?.isBuffering
-				? 'buffer'
-				: VID_ELEM?.paused
-					? 'pause'
-					: 'play',
-			tms: new Date().getTime(),
-			volume: VID_ELEM?.volume || 0,
-			isMuted: VID_ELEM?.muted || false,
-			resolution: '720p',
-			isCCOn: true,
-			playbackRate: VID_ELEM?.playbackRate || 1,
-			url: window.location.href,
-		}
-	}
-
-	const getAudioStateSpotify = () => {
-		const currentSongURL = document.querySelector('.Root__now-playing-bar [data-testid="now-playing-widget"] a[data-testid="context-link"]')
-		if (!currentSongURL) {
-			return
-		}
-
-		/* extract current songs URI and the playlist's ID it is in. */
-		const parsedURL = new URL(currentSongURL)
-		const isPrivatePlaylist = parsedURL.pathname.test(/\/user\/.+\/collection\/.+$/)
-		if (isPrivatePlaylist) {
-			return
-		}
-		const matches = parsedURL.pathname.match(/\/(.+)\/(.+)$/)
-		if (!matches) {
-			return
-		}
-		const playlistID = matches[2]
-		const songURI = parsedURL.searchParams.get('uri')
-		if (!songURI) {
-			return
-		}
-
-		const playbackBarElem = document.querySelector('.playback-bar [type="range"]')
-		if (!playbackBarElem) {
-			return
-		}
-
-		const playerBtn = document.querySelector('[data-testid="control-button-playpause"]')
-		let playState = 'play'
-		if (playerBtn) {
-			playState = (playerBtn.ariaLabel === 'Play') ? 'pause' : 'play'
-		}
-		const timestamp = playbackBarElem.value
-		const duration = playbackBarElem.max
-
-		return {
-			nodeId: 43,
-			service: 'spotify',
-			meta: {
-				'playlistID': playlistID,
-				'songURI': songURI
-			},
-			timestamp: timestamp,
-			state: playState,
-			tms: new Date().getTime(),
-			duration: duration
-		}
-	}
-
-	const requestEventFromOwner = (roomName) => {
-		sendMessageToBG({
-			type: 'sync_room_data',
-			data: { roomName: roomName }
-		})
-	}
-
-
-	const onMediaEvent = async (result) => {
-		const { roomName, data } = result
-		if (!WAS_REDIRECTED) {
-			// const currUrl = window.location.href.replace(/index=\d+/, '')
-			// const url = data.url.replace(/index=\d+/, '')
-			// if (currUrl !== url)
-			// if this did not came from a redirection, only then think about redirection.
-			if (window.location.href !== data.url) {
-				await setPrevRoomInLS(roomName)
-				window.location.href = data.url
-			}
-		}
-		if (VID_ELEM) {
-			if (parseFloat(data.timestamp) !== NaN) {
-				// code to take latency into account.
-				VID_ELEM.currentTime =
-					data.timestamp + (new Date().getTime() - data.tms) / 1000
-			}
-			if (data.videoState === 'buffer' && !VID_ELEM.paused) {
-				VID_ELEM.pause()
-			}
-			else if (data.videoState === 'play' && VID_ELEM.paused) {
-				VID_ELEM.play()
-			}
-			else if (data.videoState === 'pause' && !VID_ELEM.paused) {
-				VID_ELEM.pause()
-			}
-			if (parseFloat(data.volume) !== NaN) {
-				VID_ELEM.volume = data.volume
-			}
-			if (parseFloat(data.playbackRate) !== NaN) {
-				VID_ELEM.playbackRate = data.playbackRate
-			}
-			VID_ELEM.muted = data.isMuted
-		}
-	}
-
-	const onSyncRoomEvent = (result) => {
-		// only for owner of the room
-		sendMediaEvent()
-	}
-
-	const onStreamChangeEvent = async (resp) => {
-		// in SPA like youtube playlists, for a same video in the playlist
-		// the url could be slightly different.
-		// so, stream_change should have a dedicated event.
-		if (resp.url !== window.location.href) {
-			await setPrevRoomInLS(resp.roomName)
-			// console.log('stream change', resp)
-			window.location.href = resp.data.url
-			return
-		}
-
-	}
-
-	// SOCKET.on('stream_location', (ack) => {
-	// 	ack({success: true, data: {url: window.location.href}})
-	// })
-	const sendStreamChangeEvent = () => {
-		sendMessageToBG({
-			type: 'stream_change',
-			data: {
-				roomName: currRoom,
-				meta: getVideoCurrentState(),
-			}
-		})
-	}
-
-	const sendMediaEvent = (...args) => {
-		sendMessageToBG({
-			type: 'media_event',
-			data: {
-				roomName: currRoom,
-				meta: getVideoCurrentState(...args),
-			}
-		})
-	}
-
-	const sendStallEvent = () => {
-		sendMediaEvent({ isBuffering: true })
-	}
-
-	const sendPlayEvent = () => {
-		// in case of SPA, when the stream changes the new video generates a play event.
-		// we can use that to detect the stream change.
-		if (currUrl !== window.location.href) {
-			// stream changed
-			sendStreamChangeEvent()
-			currUrl = window.location.href
-			return
-		}
-		sendMediaEvent()
-	}
-
-	const sendPauseEvent = () => {
-		sendMediaEvent()
-	}
-
-	const sendSeekEvent = () => {
-		sendMediaEvent()
-	}
-
-	const listenToVideoEvents = () => {
-		if (!VID_ELEM) return
-		VID_ELEM.addEventListener('play', sendPlayEvent)
-		VID_ELEM.addEventListener('pause', sendPauseEvent)
-		VID_ELEM.addEventListener('seeked', sendSeekEvent)
-		VID_ELEM.addEventListener('volumechange', sendMediaEvent)
-		VID_ELEM.addEventListener('ratechange', sendMediaEvent)
-		VID_ELEM.addEventListener('waiting', sendStallEvent)
-	}
-
-	const removeVideoEvents = () => {
-		if (!VID_ELEM) return
-		VID_ELEM.removeEventListener('play', sendPlayEvent)
-		VID_ELEM.removeEventListener('pause', sendPauseEvent)
-		VID_ELEM.removeEventListener('seeked', sendSeekEvent)
-		VID_ELEM.removeEventListener('volumechange', sendMediaEvent)
-		VID_ELEM.removeEventListener('ratechange', sendMediaEvent)
-		VID_ELEM.removeEventListener('waiting', sendStallEvent)
-	}
-
-	const requestDataForCurrentRoom = () => {
-		requestEventFromOwner(currRoom)
-	}
-
-	// const joineeVideoListenEvents = () => {
-	// 	if (!VID_ELEM) return
-	// 	VID_ELEM.addEventListener('play', requestDataForCurrentRoom)
-	// }
-
-	// const joineeVideoUnListenEvents = () => {
-	// 	if (!VID_ELEM) return
-	// 	VID_ELEM.removeEventListener('play', requestDataForCurrentRoom)
-	// }
-
-
-	/* const listenToUrlChange = () => {
-		// in SPA like youtube playlists, for a same video in the playlist
-		// the url could be slightly different.
-		// so, stream_change should have a dedicated event.
-		let prevUrl = window.location.href
-		const observer = new MutationObserver((mutations) => {
-			if (window.location.href !== prevUrl) {
-				sendStreamChangeEvent()
-			}
-		})
-		const config = {subtree: true, childList: true};
-		observer.observe(document, config);
-		return observer
-	} */
-
-	const createRoom = async (roomName) => {
-		const result = await sendMessageToBG({ type: 'create_room', 'data': { roomName: roomName, meta: getVideoCurrentState() } })
-		if (result.success) {
-			currUrl = window.location.href
-			currRoom = await sendMessageToBG({type: 'set_storage', data: {key: CURR_ROOM_ID, value: roomName}})
-			listenToVideoEvents()
-		}
-		return result
-	}
-
-	const joinRoom = async (roomName) => {
-		const result = await sendMessageToBG({ type: 'join_room', 'data': { roomName: roomName } })
-		if (result.success) {
-			currRoom = await sendMessageToBG({type: 'set_storage', data: {key: CURR_ROOM_ID, value: roomName}})
-			if (result.data.isOwner) {
-				listenToVideoEvents()
-			} else {
-				// just listen to video buffering events and ask for fresh
-				// data after buffer
-				// joineeVideoListenEvents()
-			}
-		}
-		return result
-	}
-
-	const leaveRoom = async (roomName) => {
-		const result = await sendMessageToBG({ type: 'leave_room', 'data': { roomName: roomName } })
-		if (result.success) {
-			currRoom = await sendMessageToBG({type: 'set_storage', data: {key: CURR_ROOM_ID, value: null}})
-			await sendMessageToBG({ type: 'remove_all_listeners' })
-			if (result.data.isOwner) {
-				removeVideoEvents()
-			} else {
-				// joineeVideoUnListenEvents()
-			}
-		}
-		return result
-	}
-
-	const listRooms = async () => {
-		log('current room', currRoom)
-		// return await new Promise((resolve) => {
-		// 	SOCKET.emit('list_rooms', (result) => {
-		// 		resolve(result)
-		// 	})
-		// })
-		return await sendMessageToBG({ type: 'list_rooms' })
-	}
-	const connectToWebSocket = async () => {
-		return await sendMessageToBG({
-			type: 'websocket_connect'
-		})
-	}
-	const sendMessageToBG = async (message) => {
-		// log('req', message)
-		const resp = await chrome.runtime.sendMessage(message)
-		// log('res', resp)
-		return resp
-	}
-
-	const CURR_ROOM_ID = 'currRoom'
-	let currRoom = await sendMessageToBG({type: 'get_storage', data: {key: CURR_ROOM_ID}})
-	let currUrl = window.location.href
-	let VID_ELEM = document.querySelector(
-		'video[src]:not([rel=""]), video > source[src]:not([rel=""])'
-	)
-	if (VID_ELEM && VID_ELEM.tagName === 'SOURCE') {
-		VID_ELEM = VID_ELEM.parentElement
-	}
-	const prevRoomName = await getPrevRoomFromLS()
-	const WAS_REDIRECTED = !!prevRoomName
-
-	if (prevRoomName) {
-		await removePrevRoomFromLS()
-		log('previous room found: ', prevRoomName)
-		const result = await connectToWebSocket()
-		if (result.success) {
-			currUrl = window.location.href
-			await joinRoom(prevRoomName)
-			// sometimes the video is stll streaming after being freshly loaded
-			// and the media_event from the owner could arrive while buffering
-			// which will put the video out of sync. hence, after sometime,
-			// request the owner to send the media_event again.
-			const timeoutMs = 2500
-			setTimeout(() => {
-				requestEventFromOwner(prevRoomName)
-			}, timeoutMs * 1)
-			setTimeout(() => {
-				requestEventFromOwner(prevRoomName)
-			}, timeoutMs * 2.5)
-
-		}
-	} else {
-		// log('prev room not found')
-	}
-
-	chrome.runtime.onMessage.addListener((message, sender, reply) => {
-		// do not use async function if u want to return value after awaiting.
-		// instead use an async IIFE and use return true;
-
-		; (async () => {
-			if (message.type === 'media_event') {
-				onMediaEvent(message.data)
-				reply()
-			}
-			else if (message.type === 'sync_room_data') {
-				onSyncRoomEvent(message.data)
-				reply()
-			}
-			else if (message.type === 'stream_change') {
-				onStreamChangeEvent(message.data)
-				reply()
-			}
-
-			else if (message.type === 'get_prev_room_from_storage') {
-				const result = await getPrevRoomFromLS()
-				reply(result)
-				return
-			} else if (message.type === 'remove_prev_room_from_storage') {
-				removePrevRoomFromLS()
-				reply(result)
-				return
-			} else if (message.type === 'set_server_address') {
-				const result = await sendMessageToBG({ type: message.type, data: message.roomName })
-				reply(result)
-				return
-			} else if (message.type === 'get_server_address') {
-				const result = await getServerAddress()
-				reply(result)
-				return
-			}
-			VID_ELEM = document.querySelector(
-				'video[src]:not([rel=""]), video > source[src]:not([rel=""])'
-			)
-			// if the source elem was selected, then the real video elem is the parent elem
-			// :has() is upcoming but not supported yet.
-			if (VID_ELEM && VID_ELEM.tagName === 'SOURCE') {
-				VID_ELEM = VID_ELEM.parentElement
-			}
-
-			let result = await connectToWebSocket()
-			if (!result.success) {
-				reply(result)
-				return
-			}
-			if (message.type === 'create_room') {
-				if (!VID_ELEM) {
-					result = {
-						success: false,
-						data: { message: 'No video in current page. Go to a webpage with video.' },
-					}
-				} else {
-					result = await createRoom(message.roomName)
-				}
-			} else if (message.type === 'join_room') {
-				result = await joinRoom(message.roomName)
-			} else if (message.type === 'leave_room') {
-				result = await leaveRoom(currRoom)
-			} else if (message.type === 'list_rooms') {
-				result = await listRooms()
-			}
-
-			reply(result)
-		})()
-		return true
-	})
-})()
+// })()
