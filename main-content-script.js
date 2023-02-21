@@ -80,7 +80,6 @@
 			return
 		}
 
-		// first pause/[play] and the seek
 		let topMostComponent = rootElem[requiredProp]
 		if (!topMostComponent) {
 			log('reactFiber prop on root elem not found')
@@ -98,25 +97,15 @@
 		
 		const playerAPI = getPlayerAPIFn()
 		
-		// const playerState = playerAPI.getState()
-		// const currSongURI = playerState.item.uri
-		// let isTheCurrentlyPlayingSong = false
-		// if (recv.songURI === CURR_SONG_URI) {
-		// 	isTheCurrentlyPlayingSong = true
-		// } else {
-		// 	CURR_SONG_URI = recv.songURI
-		// 	isTheCurrentlyPlayingSong = (playerState.context.uri === recv.playlistID) && (currSongURI === recv.songURI)
-		// }
-		if (recv.mediaState === 'play') {
-			// if (isTheCurrentlyPlayingSong) {
-			if (!streamChanged) {
-				playerAPI.resume()
-			} else {
-				// log('playing new song')
+		if (streamChanged) {
+			const playerState = playerAPI.getState()
+			const isRecvSongAlreadyPlaying = (playerState.context.uri === recv.playlistID) && (playerState.item.uri === recv.songURI)
+			if (!isRecvSongAlreadyPlaying) {
+				log('playing new song', recv.songURI, recv.playlistID)
 				// calling this method automatically seeks the song to 00:00
 				// and the play() method is handled asynci-shly while the seekTo() is handled sync-ishly
 				// this causes the invokation of seekTo() method, even after play(), to be useless.
-
+				
 				playerAPI.play(
 					{ "uri": recv.playlistID },
 					{},
@@ -125,13 +114,19 @@
 				// return and dont seek.
 				return
 			}
+			log('song already playing')
+		}
+		if (recv.mediaState === 'play') {
+			log('resuming song')
+			playerAPI.resume()
 		}
 		else if (recv.mediaState === 'pause') {
+			log('puaseing song')
 			playerAPI.pause()
 		}
 
-		// 60ms for compensating for JS function execution time
-		const latency = new Date().getTime() - recv.tms + 60
+		// 80ms for compensating for JS function execution time
+		const latency = new Date().getTime() - recv.tms + 80
 		playerAPI.seekTo(recv.timestampMs + latency)
 	}
 
@@ -236,10 +231,19 @@
 		}
 	}
 
+	const sendMediaEventAfterDelay = (delayMs) => {
+		setTimeout(() => {
+			log('delay complete .sending now')
+			sendMediaEvent()
+		}, delayMs);
+	}
+
 	const onSyncRoomEvent = () => {
 		// only for owner of the room
-		// sendMediaEvent()
 		sendStreamChangeEvent()
+		// sendMediaEvent()
+		sendMediaEventAfterDelay(4200)
+		sendMediaEventAfterDelay(7300)
 	}
 
 	const onStreamChangeEvent = async (resp) => {
@@ -328,13 +332,6 @@
 		VID_ELEM.addEventListener('waiting', sendStallEvent)
 	}
 
-	const sendMediaEventAfterDelay = (delayMs) => {
-		setTimeout(() => {
-			log('delay complete .sending now')
-			sendMediaEvent()
-		}, delayMs);
-	}
-
 	const listenToSpotifyAudioEvents = () => {
 		const spotifyPlayer = getPlayerAPIFn()
 		spotifyPlayer._events._emitter.addListener('update', async (e) => {
@@ -345,7 +342,8 @@
 				CURR_SONG_URI_OWNERPOV = data.item.uri
 				await sendStreamChangeEvent()
 				sendMediaEventAfterDelay(3100)
-				sendMediaEventAfterDelay(4500)	
+				sendMediaEventAfterDelay(4500)
+				sendMediaEventAfterDelay(5500)
 			}
 		})
 	}
@@ -449,7 +447,7 @@
 	}
 
 	window.addEventListener('message', async (event) => {
-		log('message', event)
+		// log('message', event)
 		if (event.source !== window || event.data.type !== 'syncer-extension-bg-to-mcs') {
 			// log('exiting')
 			return
