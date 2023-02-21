@@ -13,12 +13,20 @@
 	}
 
 	const spotifyRootElemSelector = '[data-testid="root"]'
-	const spotifyPlayerProgressBarSelector = '[data-testid="playback-progressbar"]'
+	let CURR_SONG_URI = ''
+	let CURR_SONG_URI_OWNERPOV = ''
+	let PLAYER_API_STORE;
 
 	const log = (...msg) => {
 		console.log('CS:', ...msg)
 	}
 
+	const asleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+
+	const getURLRedirectInfo = async (url) => {
+		const resp = await sendMessageToBG({ type: 'get_url_redirect_info', data: { url: url } })
+		return resp
+	}
 
 	const setPrevRoomInLS = async (roomName) => {
 		// localStorage.setItem(STORAGE_KEY, roomName)
@@ -35,103 +43,20 @@
 		await sendMessageToBG({ type: 'remove_prev_room' })
 	}
 
-
 	const isSpotifyService = () => window.location.href.startsWith('https://open.spotify')
-
-
-	const CURR_ROOM_ID = 'currRoom'
-	let currRoom = await sendMessageToBG({ type: 'get_storage', data: { key: CURR_ROOM_ID } })
-	let currUrl = window.location.href
+	
 	let VID_ELEM = document.querySelector(
 		'video[src]:not([rel=""]), video > source[src]:not([rel=""])'
 	)
 	if (VID_ELEM && VID_ELEM.tagName === 'SOURCE') {
 		VID_ELEM = VID_ELEM.parentElement
 	}
+	
+	const CURR_ROOM_ID = 'currRoom'
+	let currRoom = await sendMessageToBG({ type: 'get_storage', data: { key: CURR_ROOM_ID } })
+	let currUrl = window.location.href
 	const prevRoomName = await getPrevRoomFromLS()
 	const WAS_REDIRECTED = !!prevRoomName
-
-	if (prevRoomName) {
-		await removePrevRoomFromLS()
-		log('previous room found: ', prevRoomName)
-		const result = await connectToWebSocket()
-		if (result.success) {
-			currUrl = window.location.href
-			await joinRoom(prevRoomName)
-			// sometimes the video is stll streaming after being freshly loaded
-			// and the media_event from the owner could arrive while buffering
-			// which will put the video out of sync. hence, after sometime,
-			// request the owner to send the media_event again.
-			const timeoutMs = 2500
-			setTimeout(() => {
-				requestEventFromOwner(prevRoomName)
-			}, timeoutMs * 1)
-			setTimeout(() => {
-				requestEventFromOwner(prevRoomName)
-			}, timeoutMs * 2.5)
-
-		}
-	} else {
-		// log('prev room not found')
-	}
-
-	window.addEventListener('message', async (event) => {
-		if (event.source !== window || event.data.type !== 'syncer-extension-bg-to-mcs') {
-			// log('exiting')
-			return
-		}
-		const port = event.ports[0]
-		const message = event.data.data
-		log('message/....', message)
-		if (message.type === 'media_event') {
-			if (isSpotifyService()) {
-				handleSpotifyStreamEvent(message.data.data)
-			} else {
-				onMediaEvent(message.data)
-			}
-			port.postMessage({})
-		}
-		else if (message.type === 'sync_room_data') {
-			onSyncRoomEvent(message.data)
-			port.postMessage({})
-		}
-		else if (message.type === 'stream_change') {
-			onStreamChangeEvent(message.data)
-			port.postMessage({})
-		}
-
-		VID_ELEM = document.querySelector(
-			'video[src]:not([rel=""]), video > source[src]:not([rel=""])'
-		)
-		// if the source elem was selected, then the real video elem is the parent elem
-		// :has() is upcoming but not supported yet.
-		if (VID_ELEM && VID_ELEM.tagName === 'SOURCE') {
-			VID_ELEM = VID_ELEM.parentElement
-		}
-
-		let result = await connectToWebSocket()
-		if (!result.success) {
-			port.postMessage(result)
-			return
-		}
-		if (message.type === 'create_room') {
-			if (!VID_ELEM && !isSpotifyService()) {
-				result = {
-					success: false,
-					data: { message: 'No video in current page. Go to a webpage with video.' },
-				}
-			} else {
-				result = await createRoom(message.roomName)
-			}
-		} else if (message.type === 'join_room') {
-			result = await joinRoom(message.roomName)
-		} else if (message.type === 'leave_room') {
-			result = await leaveRoom(currRoom)
-		} else if (message.type === 'list_rooms') {
-			result = await listRooms()
-		}
-		port.postMessage(result)
-	})
 
 	const getPropertyBeginningWith = (propPrefix, elem) => {
 		const reactProps = Object.getOwnPropertyNames(elem)
@@ -146,16 +71,17 @@
 		return requiredProp
 	}
 
-	const handleSpotifyStreamEvent = (recv) => {
-
-		const requiredProp = getPropertyBeginningWith('__reactFiber$', document.querySelector(spotifyRootElemSelector))
+	const getPlayerAPIFn = () => {
+		if (PLAYER_API_STORE) return PLAYER_API_STORE
+		const rootElem = document.querySelector(spotifyRootElemSelector)
+		const requiredProp = getPropertyBeginningWith('__reactFiber$', rootElem)
 		if (!requiredProp) {
 			log('reactFiber prop name not found')
 			return
 		}
 
 		// first pause/[play] and the seek
-		let topMostComponent = document.querySelector(spotifyRootElemSelector)[requiredProp]
+		let topMostComponent = rootElem[requiredProp]
 		if (!topMostComponent) {
 			log('reactFiber prop on root elem not found')
 			return
@@ -164,65 +90,90 @@
 			if (!topMostComponent.return) break;
 			topMostComponent = topMostComponent.return;
 		}
-		const playerAPI = topMostComponent.child.memoizedProps.platform.getPlayerAPI()
-		const isCurrentlyPlayingSong = (playerAPI.getState().context.uri === recv.playlistID) && (playerAPI.getState().item.uri === recv.songURI)
+		PLAYER_API_STORE = topMostComponent.child.memoizedProps.platform.getPlayerAPI()
+		return PLAYER_API_STORE
+	}
+	
+	const handleSpotifyStreamEvent = (recv, streamChanged) => {
+		
+		const playerAPI = getPlayerAPIFn()
+		
+		// const playerState = playerAPI.getState()
+		// const currSongURI = playerState.item.uri
+		// let isTheCurrentlyPlayingSong = false
+		// if (recv.songURI === CURR_SONG_URI) {
+		// 	isTheCurrentlyPlayingSong = true
+		// } else {
+		// 	CURR_SONG_URI = recv.songURI
+		// 	isTheCurrentlyPlayingSong = (playerState.context.uri === recv.playlistID) && (currSongURI === recv.songURI)
+		// }
 		if (recv.mediaState === 'play') {
-			if (isCurrentlyPlayingSong) {
+			// if (isTheCurrentlyPlayingSong) {
+			if (!streamChanged) {
 				playerAPI.resume()
 			} else {
+				// log('playing new song')
+				// calling this method automatically seeks the song to 00:00
+				// and the play() method is handled asynci-shly while the seekTo() is handled sync-ishly
+				// this causes the invokation of seekTo() method, even after play(), to be useless.
+
 				playerAPI.play(
 					{ "uri": recv.playlistID },
 					{},
 					{ "skipTo": { "uri": recv.songURI } }
 				)
+				// return and dont seek.
+				return
 			}
 		}
 		else if (recv.mediaState === 'pause') {
 			playerAPI.pause()
 		}
 
-		// seek to specified timestamp
-		const progressBarElem = document.querySelector(spotifyPlayerProgressBarSelector)[requiredProp]
-		if (!progressBarElem) {
-			log('progress bar elem not found')
-			return
-		}
-		let correspondingProps = progressBarElem.return?.memoizedProps
-		let seekFn = correspondingProps?.onDragEnd
-		if (!seekFn) {
-			let currentComponent = progressBarElem.return
-			if (currentComponent) {
-				while (true) {
-					currentComponent = currentComponent.return;
-					correspondingProps = currentComponent?.memoizedProps
-					if (correspondingProps?.onDragEnd || !currentComponent) break;
-				}
-			}
-			seekFn = correspondingProps?.onDragEnd
-		}
+		// const progressBarElem = document.querySelector(spotifyPlayerProgressBarSelector)
+		// const requiredProp = getPropertyBeginningWith('__reactFiber$', progressBarElem)
+		// if (!requiredProp) {
+		// 	log('reactFiber prop name not found')
+		// 	return
+		// }
 
-		if (!seekFn) {
-			log('seek function not found')
-			return
-		}
+		// // seek to specified timestamp
+		// const progressBarElemComp = progressBarElem[requiredProp]
+		// if (!progressBarElemComp) {
+		// 	log('progress bar elem not found')
+		// 	return
+		// }
+		// let correspondingProps = progressBarElemComp.return?.memoizedProps
+		// let seekFn = correspondingProps?.onDragEnd
+		// if (!seekFn) {
+		// 	let currentComponent = progressBarElemComp.return
+		// 	if (currentComponent) {
+		// 		while (true) {
+		// 			currentComponent = currentComponent.return;
+		// 			correspondingProps = currentComponent?.memoizedProps
+		// 			if (correspondingProps?.onDragEnd || !currentComponent) break;
+		// 		}
+		// 	}
+		// 	seekFn = correspondingProps?.onDragEnd
+		// }
+
+		// if (!seekFn) {
+		// 	log('seek function not found')
+		// 	return
+		// }
+
+		// 60ms for compensating for JS function execution time
+		const latency = new Date().getTime() - recv.tms + 60
+		// log('latency', latency)
 		// const currentSongTotalDurationSecs = correspondingProps?.max
 		// between [0 - 1] Example: 0.2 means seek to 20%
-		const percentageFracToSeekTo = recv.timestamp / recv.duration
-		log('seeking to ', percentageFracToSeekTo, ' of ', recv.duration, ' secs')
-		seekFn(percentageFracToSeekTo, {})
-
+		// const percentageFracToSeekTo = (recv.timestampMs + latency) / recv.durationMs
+		playerAPI.seekTo(recv.timestampMs + latency)
 	}
 
-	const getAudioStateSpotify = (data) => {
-		let timestamp = 0
-		let duration = 1
-		let playState = 'play'
-		let playlistID, songURI
-
-		/* if no data is sent in the arguments then this means no event listener is installed yet for media events.
-			Hence, we gotta manually extract the media info from the page. */
-		if (!data) {
-			const currentSongURL = document.querySelector('.Root__now-playing-bar [data-testid="now-playing-widget"] a[data-testid="context-link"]')
+	const getAudioStateSpotify = async () => {
+		// if (!data) {
+			/* const currentSongURL = document.querySelector('.Root__now-playing-bar [data-testid="now-playing-widget"] a[data-testid="context-link"]')
 			if (!currentSongURL) {
 				return
 			}
@@ -253,21 +204,21 @@
 			if (playerBtn) {
 				playState = (playerBtn.ariaLabel === 'Play') ? 'pause' : 'play'
 			}
-			timestamp = parseInt(playbackBarElem.value, 10)
-			duration = parseInt(playbackBarElem.max, 10)
-		}
-		else {
-			log('getting from API not dom')
-			timestamp = data.positionAsOfTimestamp / 1000 // TODO: send ms instead of s for more precision
-			duration = data.duration / 1000				// TODO: send ms instead of s for more precision
-			playState = data.isPaused ? 'pause' : 'play'
-			playlistID = data.context.uri
-			songURI = data.item.uri
-		}
+			timestampMs = parseInt(playbackBarElem.value * 1000, 10)
+			durationMs = parseInt(playbackBarElem.max * 1000, 10)
+			 */
+		// }
+		
+		const playerHarmonyState = await getPlayerAPIFn()._harmony.getCurrentState()
+		const timestampMs = playerHarmonyState.position
+		const durationMs = playerHarmonyState.duration
+		const playState = playerHarmonyState.paused ? 'pause' : 'play'
+		const playlistID = playerHarmonyState.context?.uri || ''
+		const songURI = playerHarmonyState.track_window?.current_track?.uri || ''
 
 		return {
 			nodeId: 43,
-			timestamp: timestamp,
+			timestampMs: timestampMs,
 			mediaState: playState,
 			service: 'spotify',
 			tms: new Date().getTime(),
@@ -276,7 +227,7 @@
 			playbackRate: 1,
 			playlistID: playlistID,
 			songURI: songURI,
-			duration: duration,
+			durationMs: durationMs,
 		}
 	}
 
@@ -299,9 +250,9 @@
 		}
 	}
 
-	const getMediaCurrentState = (data) => {
+	const getMediaCurrentState = async (data) => {
 		if (isSpotifyService()) {
-			return getAudioStateSpotify(data)
+			return await getAudioStateSpotify(data)
 		}
 		return getVideoCurrentState(data)
 	}
@@ -315,18 +266,22 @@
 
 
 	const onMediaEvent = async (result) => {
+		log('called onMediaEvent', result)
 		const { roomName, data } = result
-		if (!WAS_REDIRECTED) {
+		// if (!WAS_REDIRECTED) {
+		if (false) {
 			// const currUrl = window.location.href.replace(/index=\d+/, '')
 			// const url = data.url.replace(/index=\d+/, '')
 			// if (currUrl !== url)
 			// if this did not came from a redirection, only then think about redirection.
 			if (window.location.href !== data.url) {
+				log('setting prev room in LS and redirecting')
 				await setPrevRoomInLS(roomName)
 				window.location.href = data.url
 			}
 		}
 		if (VID_ELEM) {
+			log('VID ELEM settig state')
 			if (parseFloat(data.timestamp) !== NaN) {
 				// code to take latency into account.
 				VID_ELEM.currentTime =
@@ -348,22 +303,38 @@
 				VID_ELEM.playbackRate = data.playbackRate
 			}
 			VID_ELEM.muted = data.isMuted
+		} else {
+			log('no video element found to act on media event')
 		}
 	}
 
 	const onSyncRoomEvent = () => {
 		// only for owner of the room
-		sendMediaEvent()
+		// sendMediaEvent()
+		sendStreamChangeEvent()
 	}
 
 	const onStreamChangeEvent = async (resp) => {
 		// in SPA like youtube playlists, for a same video in the playlist
 		// the url could be slightly different.
 		// so, stream_change should have a dedicated event.
-		if (resp.url !== window.location.href) {
+		const recvdURL = resp.data.url
+		if (recvdURL !== window.location.href) {
+			const redInfo = await getURLRedirectInfo(recvdURL)
+			if (redInfo.count > 4 && ((new Date().getTime() - redInfo.lastUpdated) < 18_000) ) {
+				// too much - too frequent redirections. STOP.
+				log('too much - too frequent redirections. STOP.')
+				return
+			}
+			await sendMessageToBG({
+				type: 'increment_redirect_count',
+				data: {
+					url: recvdURL
+				}
+			})
 			await setPrevRoomInLS(resp.roomName)
 			// console.log('stream change', resp)
-			window.location.href = resp.data.url
+			window.location.href = recvdURL
 			return
 		}
 
@@ -372,22 +343,22 @@
 	// SOCKET.on('stream_location', (ack) => {
 	// 	ack({success: true, data: {url: window.location.href}})
 	// })
-	const sendStreamChangeEvent = () => {
+	const sendStreamChangeEvent = async (...args) => {
 		sendMessageToBG({
 			type: 'stream_change',
 			data: {
 				roomName: currRoom,
-				meta: getMediaCurrentState(),
+				meta: await getMediaCurrentState(...args),
 			}
 		})
 	}
 
-	const sendMediaEvent = (...args) => {
-		sendMessageToBG({
+	const sendMediaEvent =  async (...args) => {
+		await sendMessageToBG({
 			type: 'media_event',
 			data: {
 				roomName: currRoom,
-				meta: getMediaCurrentState(...args),
+				meta: await getMediaCurrentState(...args),
 			}
 		})
 	}
@@ -396,12 +367,12 @@
 		sendMediaEvent({ isBuffering: true })
 	}
 
-	const sendPlayEvent = () => {
+	const sendPlayEvent = async () => {
 		// in case of SPA, when the stream changes the new video generates a play event.
 		// we can use that to detect the stream change.
 		if (currUrl !== window.location.href) {
 			// stream changed
-			sendStreamChangeEvent()
+			await sendStreamChangeEvent()
 			currUrl = window.location.href
 			return
 		}
@@ -429,26 +400,25 @@
 		VID_ELEM.addEventListener('waiting', sendStallEvent)
 	}
 
+	const sendMediaEventAfterDelay = (delayMs) => {
+		setTimeout(() => {
+			log('delay complete .sending now')
+			sendMediaEvent()
+		}, delayMs);
+	}
+
 	const listenToSpotifyAudioEvents = () => {
-		const requiredProp = getPropertyBeginningWith('__reactFiber$', document.querySelector(spotifyRootElemSelector))
-		if (!requiredProp) {
-			log('reactFiber prop name not found')
-			return
-		}
-
-		let topMostComponent = document.querySelector(spotifyRootElemSelector)[requiredProp]
-		if (!topMostComponent) {
-			log('reactFiber prop on root elem not found')
-			return
-		}
-		while (true) {
-			if (!topMostComponent.return) break;
-			topMostComponent = topMostComponent.return;
-		}
-
-		topMostComponent.child.memoizedProps.platform.getPlayerAPI()._events._emitter.addListener('update', (e) => {
+		const spotifyPlayer = getPlayerAPIFn()
+		spotifyPlayer._events._emitter.addListener('update', async (e) => {
 			const data = e.data
+			if (!data) return
 			sendMediaEvent(data)
+			if (data.item.uri !== CURR_SONG_URI_OWNERPOV) {
+				CURR_SONG_URI_OWNERPOV = data.item.uri
+				await sendStreamChangeEvent()
+				sendMediaEventAfterDelay(3100)
+				sendMediaEventAfterDelay(4500)	
+			}
 		})
 	}
 
@@ -496,7 +466,7 @@
 		/* send create room event to server and the media information with it.
 		the media information is needed in case if any previous joinee are still in the room that was left by the owner.
 		this means taking the hard path for getting media information especially for spotify which does not use HTMLMediaElement. */
-		const result = await sendMessageToBG({ type: 'create_room', 'data': { roomName: roomName, meta: getMediaCurrentState() } })
+		const result = await sendMessageToBG({ type: 'create_room', 'data': { roomName: roomName, meta: await getMediaCurrentState() } })
 		if (result.success) {
 			// if room was created, we are the owner now and we should install listeners for media events to forward to room members.
 			currUrl = window.location.href
@@ -550,6 +520,96 @@
 		})
 	}
 
+	window.addEventListener('message', async (event) => {
+		log('message', event)
+		if (event.source !== window || event.data.type !== 'syncer-extension-bg-to-mcs') {
+			// log('exiting')
+			return
+		}
+		const port = event.ports[0]
+		const message = event.data.data
+		// log('message/....', message)
+		if (message.type === 'media_event') {
+			if (isSpotifyService()) {
+				log('spotify media event')
+				handleSpotifyStreamEvent(message.data.data)
+			} else {
+				onMediaEvent(message.data)
+			}
+			return port.postMessage({})
+		}
+		else if (message.type === 'sync_room_data') {
+			onSyncRoomEvent()
+			return port.postMessage({})
+		}
+		else if (message.type === 'stream_change') {
+			if (isSpotifyService()) {
+				handleSpotifyStreamEvent(message.data.data, true)
+			} else {
+				onStreamChangeEvent(message.data)
+			}
+			return port.postMessage({})
+		}
+
+		VID_ELEM = document.querySelector(
+			'video[src]:not([rel=""]), video > source[src]:not([rel=""])'
+		)
+		// if the source elem was selected, then the real video elem is the parent elem
+		// :has() is upcoming but not supported yet.
+		if (VID_ELEM && VID_ELEM.tagName === 'SOURCE') {
+			VID_ELEM = VID_ELEM.parentElement
+		}
+
+		let result = await connectToWebSocket()
+		if (!result.success) {
+			port.postMessage(result)
+			return
+		}
+		if (message.type === 'create_room') {
+			if (!VID_ELEM && !isSpotifyService()) {
+				result = {
+					success: false,
+					data: { message: 'No video in current page. Go to a webpage with video.' },
+				}
+			} else {
+				result = await createRoom(message.roomName)
+			}
+		} else if (message.type === 'join_room') {
+			result = await joinRoom(message.roomName)
+		} else if (message.type === 'leave_room') {
+			result = await leaveRoom(currRoom)
+		} else if (message.type === 'list_rooms') {
+			result = await listRooms()
+		}
+		port.postMessage(result)
+	})
+	
+	// Note: keep this below event listeners cuz this block below calls some functions
+	// which ought to trigger the on message event listener above.
+	// if that event listener is not set up, then the funntions below would keep awaiting until timeout.
+	if (prevRoomName) {
+		await removePrevRoomFromLS()
+		log('previous room found: ', prevRoomName)
+		const result = await connectToWebSocket()
+		if (result.success) {
+			currUrl = window.location.href
+			await joinRoom(prevRoomName)
+			// sometimes the video is stll streaming after being freshly loaded
+			// and the media_event from the owner could arrive while buffering
+			// which will put the video out of sync. hence, after sometime,
+			// request the owner to send the media_event again.
+			const timeoutMs = 2500
+			setTimeout(() => {
+				requestEventFromOwner(prevRoomName)
+			}, timeoutMs * 1)
+			setTimeout(() => {
+				requestEventFromOwner(prevRoomName)
+			}, timeoutMs * 2.5)
+
+		}
+	} else {
+		log('prev room not found')
+	}
 
 })()
 

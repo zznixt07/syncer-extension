@@ -7,6 +7,7 @@ import { io } from '/lib/socket.io.min.js'
 const EXT_ID = `${chrome.runtime.id}`
 const STORAGE_KEY = `${EXT_ID}_prev_room`
 const SERVER_KEY = `${EXT_ID}_server`
+const URLS_REDIRECTS_COUNT = {}
 
 const log = (...msg) => {
 	console.log('BG:', ...msg)
@@ -37,6 +38,27 @@ function deleteTimer(port) {
 	}
 }
 // </Hack>
+
+const incrementRedirectCount = (url) => {
+	if (URLS_REDIRECTS_COUNT[url] === undefined) {
+		URLS_REDIRECTS_COUNT[url] = {
+			count: 0,
+			lastUpdated: new Date().getTime()
+		}
+	}
+	URLS_REDIRECTS_COUNT[url].count += 1
+	URLS_REDIRECTS_COUNT[url].lastUpdated = new Date().getTime()
+}
+
+const getRedirectInfo = (url) => {
+	if (URLS_REDIRECTS_COUNT[url] === undefined) {
+		return {
+			count: 0,
+			lastUpdated: new Date().getTime()
+		}
+	}
+	return URLS_REDIRECTS_COUNT[url]
+}
 
 
 const getServerAddress = async () => {
@@ -138,6 +160,7 @@ const listenToEvents = (tabId) => {
 	log("Number of times listenEvents() was called:", LISTEN_EVTS_CALLED++)
 	// use a for loop here to make code DRYer
 	SOCKET.on('media_event', (result) => {
+		log('media event')
 		chrome.tabs.sendMessage(tabId, { type: 'media_event', data: result })
 	})
 	SOCKET.on('sync_room_data', (result) => {
@@ -220,7 +243,13 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
 			} else if (message.type === 'remove_all_listeners') {
 				SOCKET.removeAllListeners()
 				reply()
+			} else if (message.type === 'increment_redirect_count') {
+				incrementRedirectCount(message.data.url)
+				reply()
+			} else if (message.type === 'get_url_redirect_info') {
+				reply(getRedirectInfo(message.data.url))
 			}
+
 		}
 	})()
 	return true

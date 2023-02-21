@@ -24,7 +24,7 @@
 	}
 
     window.addEventListener('message', async (event) => {
-        if (event.source !== window || event.data.type === 'syncer-extension-mcs-to-bg') {
+        if (event.source === window && event.data.type === 'syncer-extension-mcs-to-bg') {
             // log('send msg to bg from CS', event.data.data)
             const resp = await chrome.runtime.sendMessage(event.data.data)
             // log('resep from bg to CS', resp)
@@ -34,6 +34,7 @@
 
     // send message to script injected in the page (MAIN world)
     const sendMessageToMCS = async (message) => {
+        log('send msg to MCS from CS', message)
         return new Promise((resolve) => {
             const channel = new MessageChannel() 
             channel.port1.onmessage = (event) => {
