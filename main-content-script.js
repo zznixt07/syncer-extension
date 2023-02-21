@@ -130,84 +130,12 @@
 			playerAPI.pause()
 		}
 
-		// const progressBarElem = document.querySelector(spotifyPlayerProgressBarSelector)
-		// const requiredProp = getPropertyBeginningWith('__reactFiber$', progressBarElem)
-		// if (!requiredProp) {
-		// 	log('reactFiber prop name not found')
-		// 	return
-		// }
-
-		// // seek to specified timestamp
-		// const progressBarElemComp = progressBarElem[requiredProp]
-		// if (!progressBarElemComp) {
-		// 	log('progress bar elem not found')
-		// 	return
-		// }
-		// let correspondingProps = progressBarElemComp.return?.memoizedProps
-		// let seekFn = correspondingProps?.onDragEnd
-		// if (!seekFn) {
-		// 	let currentComponent = progressBarElemComp.return
-		// 	if (currentComponent) {
-		// 		while (true) {
-		// 			currentComponent = currentComponent.return;
-		// 			correspondingProps = currentComponent?.memoizedProps
-		// 			if (correspondingProps?.onDragEnd || !currentComponent) break;
-		// 		}
-		// 	}
-		// 	seekFn = correspondingProps?.onDragEnd
-		// }
-
-		// if (!seekFn) {
-		// 	log('seek function not found')
-		// 	return
-		// }
-
 		// 60ms for compensating for JS function execution time
 		const latency = new Date().getTime() - recv.tms + 60
-		// log('latency', latency)
-		// const currentSongTotalDurationSecs = correspondingProps?.max
-		// between [0 - 1] Example: 0.2 means seek to 20%
-		// const percentageFracToSeekTo = (recv.timestampMs + latency) / recv.durationMs
 		playerAPI.seekTo(recv.timestampMs + latency)
 	}
 
 	const getAudioStateSpotify = async () => {
-		// if (!data) {
-			/* const currentSongURL = document.querySelector('.Root__now-playing-bar [data-testid="now-playing-widget"] a[data-testid="context-link"]')
-			if (!currentSongURL) {
-				return
-			}
-
-			// extract current songs URI and the playlist's ID it is in.
-			const parsedURL = new URL(currentSongURL)
-			const isPrivatePlaylist = /\/user\/.+\/collection\/.+$/.test(parsedURL.pathname)
-			if (isPrivatePlaylist) {
-				return
-			}
-			const matches = parsedURL.pathname.match(/\/(.+)\/(.+)$/)
-			if (!matches) {
-				return
-			}
-			playlistID = matches[2]
-			songURI = parsedURL.searchParams.get('uri')
-			if (!songURI) {
-				return
-			}
-
-			const playbackBarElem = document.querySelector('.playback-bar [type="range"]')
-			if (!playbackBarElem) {
-				return
-			}
-
-			const playerBtn = document.querySelector('[data-testid="control-button-playpause"]')
-			playState = 'play'
-			if (playerBtn) {
-				playState = (playerBtn.ariaLabel === 'Play') ? 'pause' : 'play'
-			}
-			timestampMs = parseInt(playbackBarElem.value * 1000, 10)
-			durationMs = parseInt(playbackBarElem.max * 1000, 10)
-			 */
-		// }
 		
 		const playerHarmonyState = await getPlayerAPIFn()._harmony.getCurrentState()
 		const timestampMs = playerHarmonyState.position
@@ -612,13 +540,4 @@
 	}
 
 })()
-
-// window.addEventListener('message',  (event) => {
-// 	console.log('message received2', event.data);
-// 	if (event.source !== window && event.data.type !== 'syncer-extension-bg-to-mcs') {
-// 		return
-// 	}
-// 	return event.ports[0].postMessage({})
-// })
-
 

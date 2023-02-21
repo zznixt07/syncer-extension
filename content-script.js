@@ -8,7 +8,6 @@
     }
     ; (document.head || document.documentElement).appendChild(script)
 
-    const ORIGIN = 'https://open.spotify.com'
     const log = (...msgs) => {
         console.log('CS:', ...msgs)
     }
@@ -62,15 +61,7 @@
                 reply(result)
                 return
             }
-            // else if (message.type === 'get_prev_room_from_storage') {
-            //     const result = await getPrevRoomFromLS()
-            //     reply(result)
-            //     return
-            // } else if (message.type === 'remove_prev_room_from_storage') {
-            //     removePrevRoomFromLS()
-            //     reply(result)
-            //     return
-            // }
+
             else {
                 const resp = await sendMessageToMCS(message)
                 reply(resp)
