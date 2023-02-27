@@ -43,7 +43,8 @@
 		await sendMessageToBG({ type: 'remove_prev_room' })
 	}
 
-	const isSpotifyService = () => window.location.href.startsWith('https://open.spotify')
+	const isSpotifyClient = () => window.location.href.startsWith('https://open.spotify')
+	const isSpotifyService = (data) => data.service === 'spotify'
 	
 	let VID_ELEM = document.querySelector(
 		'video[src]:not([rel=""]), video > source[src]:not([rel=""])'
@@ -174,7 +175,7 @@
 	}
 
 	const getMediaCurrentState = async (data) => {
-		if (isSpotifyService()) {
+		if (isSpotifyClient()) {
 			return await getAudioStateSpotify(data)
 		}
 		return getVideoCurrentState(data)
@@ -320,7 +321,7 @@
 	}
 
 	const listenToMediaEvents = () => {
-		if (isSpotifyService()) {
+		if (isSpotifyClient()) {
 			return listenToSpotifyAudioEvents()
 		}
 		if (!VID_ELEM) return
@@ -456,7 +457,7 @@
 		const message = event.data.data
 		// log('message/....', message)
 		if (message.type === 'media_event') {
-			if (isSpotifyService()) {
+			if (isSpotifyService(message.data.data)) {
 				log('spotify media event')
 				handleSpotifyStreamEvent(message.data.data)
 			} else {
@@ -469,8 +470,27 @@
 			return port.postMessage({})
 		}
 		else if (message.type === 'stream_change') {
-			if (isSpotifyService()) {
-				handleSpotifyStreamEvent(message.data.data, true)
+			// peek into the data to figure out the service type
+			// and then navigate to it.
+			if (isSpotifyService(message.data.data)) {
+				const resp = message.data.data
+				if (!isSpotifyClient()) {
+					await setPrevRoomInLS(message.data.roomName)
+					const playlistComps = resp.playlistID.split(':')
+					let rootPath = ''
+					if (playlistComps[1] === 'playlist') {
+						rootPath = '/playlist'
+					} else if (playlistComps[1] === 'album') {
+						rootPath = '/album'
+					}
+					if (rootPath) {
+						window.location.href = `https://open.spotify.com${rootPath}/${playlistComps[2]}`
+					} else {
+						window.location.href = 'https://open.spotify.com'
+					}
+					return
+				}
+				handleSpotifyStreamEvent(resp, true)
 			} else {
 				onStreamChangeEvent(message.data)
 			}
@@ -492,7 +512,7 @@
 			return
 		}
 		if (message.type === 'create_room') {
-			if (!VID_ELEM && !isSpotifyService()) {
+			if (!VID_ELEM && !isSpotifyClient()) {
 				result = {
 					success: false,
 					data: { message: 'No video in current page. Go to a webpage with video.' },
