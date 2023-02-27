@@ -344,7 +344,8 @@
 				await sendStreamChangeEvent()
 				sendMediaEventAfterDelay(3100)
 				sendMediaEventAfterDelay(4500)
-				sendMediaEventAfterDelay(5500)
+				sendMediaEventAfterDelay(5200)
+				sendMediaEventAfterDelay(5990)
 			}
 		})
 	}
@@ -545,12 +546,9 @@
 			// which will put the video out of sync. hence, after sometime,
 			// request the owner to send the media_event again.
 			const timeoutMs = 2500
-			setTimeout(() => {
-				requestEventFromOwner(prevRoomName)
-			}, timeoutMs * 1)
-			setTimeout(() => {
-				requestEventFromOwner(prevRoomName)
-			}, timeoutMs * 2.5)
+			setTimeout(() => requestEventFromOwner(prevRoomName), timeoutMs * 1)
+			setTimeout(() => requestEventFromOwner(prevRoomName), timeoutMs * 2.5)
+			setTimeout(() => requestEventFromOwner(prevRoomName), timeoutMs * 3.1)
 
 		}
 	} else {
