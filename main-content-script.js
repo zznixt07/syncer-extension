@@ -222,9 +222,9 @@
 			else if (data.mediaState === 'pause' && !VID_ELEM.paused) {
 				VID_ELEM.pause()
 			}
-			if (parseFloat(data.volume) !== NaN) {
-				VID_ELEM.volume = data.volume
-			}
+			// if (parseFloat(data.volume) !== NaN) {
+			// 	VID_ELEM.volume = data.volume
+			// }
 			if (parseFloat(data.playbackRate) !== NaN) {
 				VID_ELEM.playbackRate = data.playbackRate
 			}
@@ -338,7 +338,7 @@
 		VID_ELEM.addEventListener('play', sendPlayEvent)
 		VID_ELEM.addEventListener('pause', sendPauseEvent)
 		VID_ELEM.addEventListener('seeked', sendSeekEvent)
-		VID_ELEM.addEventListener('volumechange', sendMediaEvent)
+		// VID_ELEM.addEventListener('volumechange', sendMediaEvent)
 		VID_ELEM.addEventListener('ratechange', sendMediaEvent)
 		VID_ELEM.addEventListener('waiting', sendStallEvent)
 	}
