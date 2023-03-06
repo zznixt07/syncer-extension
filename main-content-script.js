@@ -552,9 +552,9 @@
 			// which will put the video out of sync. hence, after sometime,
 			// request the owner to send the media_event again.
 			const timeoutMs = 2500
-			setTimeout(() => requestEventFromOwner(prevRoomName), timeoutMs * 1)
-			setTimeout(() => requestEventFromOwner(prevRoomName), timeoutMs * 2.5)
+			setTimeout(() => requestEventFromOwner(prevRoomName), timeoutMs * 2.2)
 			setTimeout(() => requestEventFromOwner(prevRoomName), timeoutMs * 3.1)
+			setTimeout(() => requestEventFromOwner(prevRoomName), timeoutMs * 3.9)
 
 		}
 	} else {
