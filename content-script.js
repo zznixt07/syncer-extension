@@ -9,7 +9,7 @@
     ; (document.head || document.documentElement).appendChild(script)
 
     const log = (...msgs) => {
-        console.log('CS:', ...msgs)
+        // console.log('CS:', ...msgs)
     }
 
     const sendMessageToBG = async (message) => {

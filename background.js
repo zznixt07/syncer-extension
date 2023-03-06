@@ -10,7 +10,7 @@ const SERVER_KEY = `${EXT_ID}_server`
 const URLS_REDIRECTS_COUNT = {}
 
 const log = (...msg) => {
-	console.log('BG:', ...msg)
+	// console.log('BG:', ...msg)
 }
 
 /*
