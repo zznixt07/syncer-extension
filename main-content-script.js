@@ -18,7 +18,7 @@
 	let PLAYER_API_STORE;
 
 	const log = (...msg) => {
-		console.log('CS:', ...msg)
+		// console.log('CS:', ...msg)
 	}
 
 	const asleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
@@ -195,17 +195,13 @@
 		log('called onMediaEvent', result)
 		const { roomName, data } = result
 		// if (!WAS_REDIRECTED) {
-		if (false) {
-			// const currUrl = window.location.href.replace(/index=\d+/, '')
-			// const url = data.url.replace(/index=\d+/, '')
-			// if (currUrl !== url)
 			// if this did not came from a redirection, only then think about redirection.
-			if (window.location.href !== data.url) {
-				log('setting prev room in LS and redirecting')
-				await setPrevRoomInLS(roomName)
-				window.location.href = data.url
-			}
-		}
+		// 	if (window.location.href !== data.url) {
+		// 		log('setting prev room in LS and redirecting')
+		// 		await setPrevRoomInLS(roomName)
+		// 		window.location.href = data.url
+		// 	}
+		// }
 		if (VID_ELEM) {
 			log('VID ELEM settig state')
 			if (parseFloat(data.timestamp) !== NaN) {
