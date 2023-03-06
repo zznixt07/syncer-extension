@@ -43,7 +43,9 @@
 		await sendMessageToBG({ type: 'remove_prev_room' })
 	}
 
-	const isSpotifyClient = () => window.location.href.startsWith('https://open.spotify')
+	const isYoutubeClient = () => window.location.host.startsWith('www.youtube.com')
+	const isYoutubeService = (data) => data.service === 'youtube'
+	const isSpotifyClient = () => window.location.host.startsWith('open.spotify')
 	const isSpotifyService = (data) => data.service === 'spotify'
 	
 	let VID_ELEM = document.querySelector(
@@ -252,9 +254,19 @@
 		// the url could be slightly different.
 		// so, stream_change should have a dedicated event.
 		const recvdURL = resp.data.url
-		if (recvdURL !== window.location.href) {
+		const currURL = window.location.href
+		if (recvdURL !== currURL) {
+			// special case for youtube playlist
+			if (recvdURL.includes('list=')) {
+				const recvdURLParams = new URLSearchParams(recvdURL.split('?')[1])
+				const currURLParams = new URLSearchParams(currURL.split('?')[1])
+				if (recvdURLParams.get('v') === currURLParams.get('v')) {
+					// playing same video in playlist. ignore.
+					return
+				}
+			}
 			const redInfo = await getURLRedirectInfo(recvdURL)
-			if (redInfo.count > 4 && ((new Date().getTime() - redInfo.lastUpdated) < 18_000) ) {
+			if (redInfo.count > 3 && ((new Date().getTime() - redInfo.lastUpdated) < 18_000) ) {
 				// too much - too frequent redirections. STOP.
 				log('too much - too frequent redirections. STOP.')
 				return
@@ -266,11 +278,9 @@
 				}
 			})
 			await setPrevRoomInLS(resp.roomName)
-			// console.log('stream change', resp)
 			window.location.href = recvdURL
 			return
 		}
-
 	}
 
 	// SOCKET.on('stream_location', (ack) => {
@@ -536,7 +546,7 @@
 	// if that event listener is not set up, then the funntions below would keep awaiting until timeout.
 	if (prevRoomName) {
 		await removePrevRoomFromLS()
-		log('previous room found: ', prevRoomName)
+		// log('previous room found: ', prevRoomName)
 		const result = await connectToWebSocket()
 		if (result.success) {
 			currUrl = window.location.href
@@ -552,7 +562,7 @@
 
 		}
 	} else {
-		log('prev room not found')
+		// log('prev room not found')
 	}
 
 })()
