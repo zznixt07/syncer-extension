@@ -212,7 +212,7 @@
 		// }
 		if (VID_ELEM) {
 			log('VID ELEM settig state')
-			if (parseFloat(data.timestamp) !== NaN) {
+			if (!isNaN(parseFloat(data.timestamp))) {
 				// code to take latency into account.
 				VID_ELEM.currentTime =
 					data.timestamp + (new Date().getTime() - data.tms) / 1000
@@ -227,7 +227,7 @@
 			// if (parseFloat(data.volume) !== NaN) {
 			// 	VID_ELEM.volume = data.volume
 			// }
-			if (parseFloat(data.playbackRate) !== NaN) {
+			if (!isNaN(parseFloat(data.playbackRate))) {
 				VID_ELEM.playbackRate = data.playbackRate
 			}
 			VID_ELEM.muted = data.isMuted

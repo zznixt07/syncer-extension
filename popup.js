@@ -1,5 +1,8 @@
 import { toast } from './lib/wc-toast.js'
 
+// Declare chrome as a global variable for linting tools
+/* global chrome */
+
 const getCurrentTab = async () => {
 	const tabs = await chrome.tabs.query({ currentWindow: true, active: true })
 	return tabs[0]

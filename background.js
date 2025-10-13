@@ -2,6 +2,9 @@
 // const contentMain = await import(src)
 // const { io } = contentMain
 
+// Declare chrome as a global variable for linting tools
+/* global chrome */
+
 import { io } from '/lib/socket.io.min.js'
 
 const EXT_ID = `${chrome.runtime.id}`
