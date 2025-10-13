@@ -1,0 +1,1 @@
+Syncer does not collect, store, or transmit any personal user data. All synchronization and settings are handled locally or through the user-specified server. No information is shared with third parties by the extension itself.
