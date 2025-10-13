@@ -14,54 +14,53 @@
 </head>
 
 <body>
-    <section>
+    <div>
         <h3>
             <label for="server-address">
                 Server Address
             </label>
         </h3>
         <input type="text" id="server-address" minlength="1" value="http://127.0.0.1:3000">
-    </section>
-    <section>
+    </div>
+    <div>
         <h3>
             <label for="new-room-name">
                 Room Name
             </label>
         </h3>
-        <input type="text" id="new-room-name" minlength="1" list="rooms" value="shailesh">
+        <input type="text" id="new-room-name" minlength="1" list="rooms" value="chill-music-24/7">
         <datalist id="rooms">
 
         </datalist>
-    </section>
-    <div class="flex flex-col">
+    </div>
+    <div class="flex">
         <div class="pad flex">
-            <button id="create-room" class="pushable">
-                <span class="shadow"></span>
+            <button id="create-room" class="btn pushable">
+                <!-- <span class="shadow"></span>
                 <span class="edge"></span>
-                <span class="front">
-                    Create Room
-                </span>
+                <span class="front"> -->
+                Create Room
+                <!-- </span> -->
             </button>
             <!-- <input type="text" id="join-room-name" name="join-room-name" value="shailesh"> -->
-            <button class="btn" id="join-room">
+            <button class="btn pushable" id="join-room">
                 Join Room
             </button>
-        </div>
-        <section>
-            <button class="btn" id="leave-room">
-                Leave Current Room
+            <button class="btn pushable" id="leave-room">
+                Leave Room
             </button>
+        </div>
+        <div>
             <!-- <button class="btn" id="change-room-stream">Change Stream</button> -->
-        </section>
-        <button class="btn" id="list-rooms">List Rooms</button>
-
+        </div>
     </div>
-    <section>
+    <div>
         <div>
             <span>Rooms</span>
+            <button class="btn" id="list-rooms">List Rooms</button>
         </div>
         <pre id="rooms-list"></pre>
-    </section>
+    </div>
 </body>
 
 </html>

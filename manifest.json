@@ -6,7 +6,9 @@
     "content_scripts": [
         {
             "matches": [
-                "*://*/*"
+                "https://www.youtube.com/*",
+                "https://music.youtube.com/*",
+                "https://open.spotify.com/*"
             ],
             "run_at": "document_idle",
             "js": [
@@ -24,10 +26,13 @@
         "type": "module"
     },
     "permissions": [
-        "storage"
+        "storage",
+        "tabs"
     ],
     "host_permissions": [
-        "<all_urls>"
+        "https://www.youtube.com/*",
+        "https://music.youtube.com/*",
+        "https://open.spotify.com/*"
     ],
     "web_accessible_resources": [
         {
@@ -36,7 +41,9 @@
                 "main-content-script.js"
             ],
             "matches": [
-                "*://*/*"
+                "https://www.youtube.com/*",
+                "https://music.youtube.com/*",
+                "https://open.spotify.com/*"
             ]
         }
     ],

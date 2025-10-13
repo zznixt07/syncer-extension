@@ -1,7 +1,7 @@
-
 // const src = chrome.runtime.getURL('lib/socket.io.min.js')
 // const contentMain = await import(src)
 // const { io } = contentMain
+
 import { io } from '/lib/socket.io.min.js'
 
 const EXT_ID = `${chrome.runtime.id}`
@@ -14,36 +14,37 @@ const log = (...msg) => {
 }
 
 /*
------- a HACK to make service workers persistent --------
+------ a way to make service workers persistent --------
 Thx wOxxOm. Source: https://stackoverflow.com/a/66618269/12091475
 */
-// <Hack>
-chrome.runtime.onConnect.addListener(port => {
-	if (port.name !== 'foo') return;
-	port.onMessage.addListener(onMessage);
-	port.onDisconnect.addListener(deleteTimer);
-	port._timer = setTimeout(forceReconnect, 250e3, port);
-});
+// <Necessary Code>
+chrome.runtime.onConnect.addListener((port) => {
+	if (port.name !== 'foo') return
+	port.onMessage.addListener(onMessage)
+	port.onDisconnect.addListener(deleteTimer)
+	port._timer = setTimeout(forceReconnect, 250e3, port)
+})
+
 function onMessage(msg, port) {
-	console.log('received', msg, 'from', port.sender);
+	console.log('received', msg, 'from', port.sender)
 }
 function forceReconnect(port) {
-	deleteTimer(port);
-	port.disconnect();
+	deleteTimer(port)
+	port.disconnect()
 }
 function deleteTimer(port) {
 	if (port._timer) {
-		clearTimeout(port._timer);
-		delete port._timer;
+		clearTimeout(port._timer)
+		delete port._timer
 	}
 }
-// </Hack>
+// </Necessary Code>
 
 const incrementRedirectCount = (url) => {
 	if (URLS_REDIRECTS_COUNT[url] === undefined) {
 		URLS_REDIRECTS_COUNT[url] = {
 			count: 0,
-			lastUpdated: new Date().getTime()
+			lastUpdated: new Date().getTime(),
 		}
 	}
 	URLS_REDIRECTS_COUNT[url].count += 1
@@ -54,12 +55,11 @@ const getRedirectInfo = (url) => {
 	if (URLS_REDIRECTS_COUNT[url] === undefined) {
 		return {
 			count: 0,
-			lastUpdated: new Date().getTime()
+			lastUpdated: new Date().getTime(),
 		}
 	}
 	return URLS_REDIRECTS_COUNT[url]
 }
-
 
 const getServerAddress = async () => {
 	const address = await chrome.storage.sync.get(SERVER_KEY)
@@ -68,12 +68,6 @@ const getServerAddress = async () => {
 }
 
 let BASE_HOST
-	; (async () => {
-
-	})()
-// BASE_HOST = 'http://192.168.1.115:3000'
-// BASE_HOST = 'http://127.0.0.1:3000'
-// BASE_HOST = 'https://syncer-syncer.herokuapp.com'
 let SOCKET
 
 const connectToWebSocket = async () => {
@@ -81,7 +75,7 @@ const connectToWebSocket = async () => {
 		BASE_HOST = await getServerAddress()
 		SOCKET = io(BASE_HOST, {
 			reconnectionAttempts: 5,
-			transports: ['websocket']
+			transports: ['websocket'],
 		})
 	} catch (e) {
 		log('Error', e)
@@ -91,7 +85,13 @@ const connectToWebSocket = async () => {
 			resolve({ success: true, data: { message: 'connected successfully' } })
 		})
 		SOCKET.on('connect_error', (error) => {
-			resolve({ success: false, data: { message: 'error connecting to websocket.', dbg: error.toString() } })
+			resolve({
+				success: false,
+				data: {
+					message: 'error connecting to websocket.',
+					dbg: error.toString(),
+				},
+			})
 		})
 	})
 }
@@ -107,30 +107,19 @@ const socket_emit = async (eventName, data) => {
 }
 
 const createRoom = async ({ roomName, meta }) => {
-	return await socket_emit(
-		'create_room',
-		{ roomName: roomName, data: meta }
-	)
+	return await socket_emit('create_room', { roomName: roomName, data: meta })
 }
 
 const listRooms = async () => {
-	return await socket_emit(
-		'list_rooms'
-	)
+	return await socket_emit('list_rooms')
 }
 
 const joinRoom = async ({ roomName }) => {
-	return await socket_emit(
-		'join_room',
-		{ roomName: roomName }
-	)
+	return await socket_emit('join_room', { roomName: roomName })
 }
 
 const leaveRoom = async ({ roomName }) => {
-	return await socket_emit(
-		'leave_room',
-		{ roomName: roomName }
-	)
+	return await socket_emit('leave_room', { roomName: roomName })
 }
 
 const sendMediaEvent = ({ roomName, meta }) => {
@@ -154,11 +143,10 @@ const requestEventFromOwner = ({ roomName }) => {
 const sendMsgToTab = (tabId, success, msg) =>
 	chrome.tabs.sendMessage(tabId, { success: success, data: msg })
 
-
 let LISTEN_EVTS_CALLED = 0
 const listenToEvents = (tabId) => {
-	log("Number of times listenEvents() was called:", LISTEN_EVTS_CALLED++)
-	// use a for loop here to make code DRYer
+	log('Number of times listenEvents() was called:', LISTEN_EVTS_CALLED++)
+	// TODO: use a for loop here to make code DRYer
 	SOCKET.on('media_event', (result) => {
 		log('media event')
 		chrome.tabs.sendMessage(tabId, { type: 'media_event', data: result })
@@ -171,11 +159,10 @@ const listenToEvents = (tabId) => {
 	})
 }
 
-
 chrome.runtime.onMessage.addListener((message, sender, reply) => {
 	// if u want to use await, do not use async function as event listener fn.
 	// instead use an async IIFE inside the event listener and return true from the event listener;
-	; (async () => {
+	;(async () => {
 		log('message received', message)
 		if (!message) {
 			reply({})
@@ -183,11 +170,11 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
 			await chrome.storage.sync.set({ [STORAGE_KEY]: message.data })
 			reply()
 		} else if (message.type === 'set_storage') {
-			const {key, value} = message.data
+			const { key, value } = message.data
 			await chrome.storage.sync.set({ [`${STORAGE_KEY}_${key}`]: value })
 			reply(value)
 		} else if (message.type === 'get_storage') {
-			const {key} = message.data
+			const { key } = message.data
 			const values = await chrome.storage.sync.get(`${STORAGE_KEY}_${key}`)
 			reply(values[`${STORAGE_KEY}_${key}`])
 		} else if (message.type === 'get_prev_room') {
@@ -213,23 +200,22 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
 					reply(resp)
 				} else {
 					// log('already connected to websocket.')
-					reply({ success: true, data: { message: 'already connected to websocket' } })
+					reply({
+						success: true,
+						data: { message: 'already connected to websocket' },
+					})
 				}
-			}
-			else if (message.type === 'create_room') {
+			} else if (message.type === 'create_room') {
 				const res = await createRoom(message.data)
 				if (res.success) listenToEvents(sender.tab.id)
 				reply(res)
-			}
-			else if (message.type === 'join_room') {
+			} else if (message.type === 'join_room') {
 				const res = await joinRoom(message.data)
 				if (res.success) listenToEvents(sender.tab.id)
 				reply(res)
-			}
-			else if (message.type === 'list_rooms') {
+			} else if (message.type === 'list_rooms') {
 				reply(await listRooms())
-			}
-			else if (message.type === 'leave_room') {
+			} else if (message.type === 'leave_room') {
 				reply(await leaveRoom(message.data))
 			} else if (message.type === 'media_event') {
 				sendMediaEvent(message.data)
@@ -249,9 +235,7 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
 			} else if (message.type === 'get_url_redirect_info') {
 				reply(getRedirectInfo(message.data.url))
 			}
-
 		}
 	})()
 	return true
 })
-  
