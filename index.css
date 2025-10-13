@@ -18,11 +18,16 @@ body {
 }
 
 button {
-    width: 140px;
+    min-width: 80px;
 }
 
 input {
-    width: 100%;
+    /* width: 9%; */
+}
+
+.input-container {
+    display: flex;
+    flex-direction: column;
 }
 
 .flex {
@@ -55,10 +60,11 @@ input {
     position: relative;
     border: none;
     background: transparent;
-    padding: 0;
+    padding: 8px; /* Added padding instead of outline */
     cursor: pointer;
-    outline-offset: 4px;
+    /* outline-offset: 4px; */ /* Removed outline */
     transition: filter 250ms;
+    font-size: 0.6rem;
 }
 
 .shadow {

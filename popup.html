@@ -14,7 +14,7 @@
 </head>
 
 <body>
-    <div>
+    <div class="input-container">
         <h3>
             <label for="server-address">
                 Server Address
@@ -22,7 +22,7 @@
         </h3>
         <input type="text" id="server-address" minlength="1" value="http://127.0.0.1:3000">
     </div>
-    <div>
+    <div class="input-container">
         <h3>
             <label for="new-room-name">
                 Room Name
@@ -57,7 +57,7 @@
     <div>
         <div>
             <span>Rooms</span>
-            <button class="btn" id="list-rooms">List Rooms</button>
+            <button class="btn pushable" id="list-rooms">List Rooms</button>
         </div>
         <pre id="rooms-list"></pre>
     </div>
