@@ -22,7 +22,11 @@ button {
 }
 
 input {
-    /* width: 9%; */
+    background-color: #222;
+    color: #fff;
+    border: 1px solid #444;
+    border-radius: 4px;
+    padding: 6px 8px;
 }
 
 .input-container {

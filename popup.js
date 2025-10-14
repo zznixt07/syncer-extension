@@ -127,7 +127,28 @@ wc-toast-content {
 				option.value = room
 				option.textContent = room
 				dataList.appendChild(option)
-				roomList.textContent += room + '\n'
+				// roomList.textContent += room + '\n'
+
+				const wrapper = document.createElement('div')
+				wrapper.style.display = 'flex'
+				wrapper.style.alignItems = 'center'
+				wrapper.style.marginBottom = '4px'
+
+				const roomNameSpan = document.createElement('span')
+				roomNameSpan.textContent = room
+				roomNameSpan.style.flexGrow = '1'
+
+				const joinBtn = document.createElement('button')
+				joinBtn.textContent = 'Join'
+				joinBtn.className = 'btn'
+				joinBtn.style.marginLeft = '8px'
+				joinBtn.addEventListener('click', () => {
+					document.getElementById('new-room-name').value = room
+					joinRoomBtn.click() // Programmatically trigger the main join logic
+				})
+				wrapper.appendChild(roomNameSpan)
+				wrapper.appendChild(joinBtn)
+				roomList.appendChild(wrapper)
 			})
 		} else {
 			fail(result?.data?.message)
