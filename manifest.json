@@ -1,6 +1,6 @@
 {
     "name": "Syncer",
-    "version": "1.0.0",
+    "version": "1.0.2",
     "description": "Sync video with each other using a 3rd party facilitating/communication server.",
     "manifest_version": 3,
     "content_scripts": [
