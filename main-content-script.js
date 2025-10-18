@@ -1,4 +1,90 @@
 ;(async () => {
+	window.addEventListener('message', async (event) => {
+		// log('message', event)
+		if (
+			event.source !== window ||
+			event.data.type !== 'syncer-extension-bg-to-mcs'
+		) {
+			// log('exiting')
+			return
+		}
+		const port = event.ports[0]
+		const message = event.data.data
+		// log('message/....', message)
+		if (message.type === 'media_event') {
+			if (isSpotifyService(message.data.data)) {
+				log('spotify media event')
+				handleSpotifyStreamEvent(message.data.data)
+			} else {
+				onMediaEvent(message.data)
+			}
+			return port.postMessage({})
+		} else if (message.type === 'sync_room_data') {
+			onSyncRoomEvent()
+			return port.postMessage({})
+		} else if (message.type === 'stream_change') {
+			// peek into the data to figure out the service type
+			// and then navigate to it.
+			if (isSpotifyService(message.data.data)) {
+				const resp = message.data.data
+				if (!isSpotifyClient()) {
+					await setPrevRoomInLS(message.data.roomName)
+					const playlistComps = resp.playlistID.split(':')
+					let rootPath = ''
+					if (playlistComps[1] === 'playlist') {
+						rootPath = '/playlist'
+					} else if (playlistComps[1] === 'album') {
+						rootPath = '/album'
+					}
+					if (rootPath) {
+						window.location.href = `https://open.spotify.com${rootPath}/${playlistComps[2]}`
+					} else {
+						window.location.href = 'https://open.spotify.com'
+					}
+					return
+				}
+				handleSpotifyStreamEvent(resp, true)
+			} else {
+				onStreamChangeEvent(message.data)
+			}
+			return port.postMessage({})
+		}
+
+		VID_ELEM = document.querySelector(
+			'video[src]:not([rel=""]), video > source[src]:not([rel=""])'
+		)
+		// if the source elem was selected, then the real video elem is the parent elem
+		// :has() is upcoming but not supported yet.
+		if (VID_ELEM && VID_ELEM.tagName === 'SOURCE') {
+			VID_ELEM = VID_ELEM.parentElement
+		}
+
+		let result = await connectToWebSocket()
+		if (!result.success) {
+			port.postMessage(result)
+			return
+		}
+		if (message.type === 'create_room') {
+			if (!VID_ELEM && !isSpotifyClient()) {
+				result = {
+					success: false,
+					data: {
+						message: 'No video in current page. Go to a webpage with video.',
+					},
+				}
+			} else {
+				result = await createRoom(message.roomName)
+			}
+		} else if (message.type === 'join_room') {
+			result = await joinRoom(message.roomName)
+		} else if (message.type === 'leave_room') {
+			result = await leaveRoom(currRoom)
+		} else if (message.type === 'list_rooms') {
+			result = await listRooms()
+		}
+		port.postMessage(result)
+	})
+
 	const sendMessageToBG = async (message) => {
 		return new Promise((resolve) => {
 			const channel = new MessageChannel()
@@ -14,16 +100,28 @@
 		})
 	}
 
-	const spotifyRootElemSelector = '[data-testid="root"]'
-	let CURR_SONG_URI = ''
-	let CURR_SONG_URI_OWNERPOV = ''
-	let PLAYER_API_STORE
-
 	const log = (...msg) => {
 		// console.log('CS:', ...msg)
 	}
 
-	const asleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+	const correctedNow = () => {
+		return Date.now() + OFFSET_TIME_MS
+	}
+
+	const remoteTimeExchangeViaBG = async () => {
+		const resp = await sendMessageToBG({ type: 'request_remote_time' })
+		return resp?.serverTime || Date.now()
+	}
+
+	// asks the remote/server/owner for its current epoch ms time and returns it.
+	const estimateClockOffset = async () => {
+		const t0 = Date.now()
+		const remoteTime = await remoteTimeExchangeViaBG()
+		const t1 = Date.now()
+		const rtt = t1 - t0
+		const offset = remoteTime - (t0 + rtt / 2)
+		return { offset, rtt }
+	}
 
 	const getURLRedirectInfo = async (url) => {
 		const resp = await sendMessageToBG({
@@ -48,6 +146,15 @@
 		await sendMessageToBG({ type: 'remove_prev_room' })
 	}
 
+	const clockOffset = await estimateClockOffset()
+	// const clockOffset = 0
+	const OFFSET_TIME_MS = clockOffset.offset
+
+	const spotifyRootElemSelector = '[data-testid="root"]'
+	let CURR_SONG_URI = ''
+	let CURR_SONG_URI_OWNERPOV = ''
+	let PLAYER_API_STORE
+
 	const isYoutubeClient = () =>
 		window.location.host.startsWith('www.youtube.com')
 	const isYoutubeService = (data) => data.service === 'youtube'
@@ -57,6 +164,7 @@
 	let VID_ELEM = document.querySelector(
 		'video[src]:not([rel=""]), video > source[src]:not([rel=""])'
 	)
+
 	if (VID_ELEM && VID_ELEM.tagName === 'SOURCE') {
 		VID_ELEM = VID_ELEM.parentElement
 	}
@@ -139,7 +247,7 @@
 		}
 
 		// 80ms for compensating for JS function execution time
-		const latency = new Date().getTime() - recv.tms + 80
+		const latency = correctedNow() - recv.tms + 80
 		playerAPI.seekTo(recv.timestampMs + latency)
 	}
 
@@ -156,7 +264,7 @@
 			timestampMs: timestampMs,
 			mediaState: playState,
 			service: 'spotify',
-			tms: new Date().getTime(),
+			tms: correctedNow(),
 			volume: 100,
 			isMuted: false,
 			playbackRate: 1,
@@ -175,7 +283,7 @@
 				: VID_ELEM?.paused
 				? 'pause'
 				: 'play',
-			tms: new Date().getTime(),
+			tms: correctedNow(),
 			volume: VID_ELEM?.volume || 0,
 			isMuted: VID_ELEM?.muted || false,
 			resolution: '720p',
@@ -215,7 +323,7 @@
 			if (!isNaN(parseFloat(data.timestamp))) {
 				// code to take latency into account.
 				VID_ELEM.currentTime =
-					data.timestamp + (new Date().getTime() - data.tms) / 1000
+					data.timestamp + (correctedNow() - data.tms) / 1000
 			}
 			if (data.mediaState === 'buffer' && !VID_ELEM.paused) {
 				VID_ELEM.pause()
@@ -374,7 +482,7 @@
 		VID_ELEM.removeEventListener('play', sendPlayEvent)
 		VID_ELEM.removeEventListener('pause', sendPauseEvent)
 		VID_ELEM.removeEventListener('seeked', sendSeekEvent)
-		VID_ELEM.removeEventListener('volumechange', sendMediaEvent)
+		// VID_ELEM.removeEventListener('volumechange', sendMediaEvent)
 		VID_ELEM.removeEventListener('ratechange', sendMediaEvent)
 		VID_ELEM.removeEventListener('waiting', sendStallEvent)
 	}
@@ -483,92 +591,6 @@
 			type: 'websocket_connect',
 		})
 	}
-
-	window.addEventListener('message', async (event) => {
-		// log('message', event)
-		if (
-			event.source !== window ||
-			event.data.type !== 'syncer-extension-bg-to-mcs'
-		) {
-			// log('exiting')
-			return
-		}
-		const port = event.ports[0]
-		const message = event.data.data
-		// log('message/....', message)
-		if (message.type === 'media_event') {
-			if (isSpotifyService(message.data.data)) {
-				log('spotify media event')
-				handleSpotifyStreamEvent(message.data.data)
-			} else {
-				onMediaEvent(message.data)
-			}
-			return port.postMessage({})
-		} else if (message.type === 'sync_room_data') {
-			onSyncRoomEvent()
-			return port.postMessage({})
-		} else if (message.type === 'stream_change') {
-			// peek into the data to figure out the service type
-			// and then navigate to it.
-			if (isSpotifyService(message.data.data)) {
-				const resp = message.data.data
-				if (!isSpotifyClient()) {
-					await setPrevRoomInLS(message.data.roomName)
-					const playlistComps = resp.playlistID.split(':')
-					let rootPath = ''
-					if (playlistComps[1] === 'playlist') {
-						rootPath = '/playlist'
-					} else if (playlistComps[1] === 'album') {
-						rootPath = '/album'
-					}
-					if (rootPath) {
-						window.location.href = `https://open.spotify.com${rootPath}/${playlistComps[2]}`
-					} else {
-						window.location.href = 'https://open.spotify.com'
-					}
-					return
-				}
-				handleSpotifyStreamEvent(resp, true)
-			} else {
-				onStreamChangeEvent(message.data)
-			}
-			return port.postMessage({})
-		}
-
-		VID_ELEM = document.querySelector(
-			'video[src]:not([rel=""]), video > source[src]:not([rel=""])'
-		)
-		// if the source elem was selected, then the real video elem is the parent elem
-		// :has() is upcoming but not supported yet.
-		if (VID_ELEM && VID_ELEM.tagName === 'SOURCE') {
-			VID_ELEM = VID_ELEM.parentElement
-		}
-
-		let result = await connectToWebSocket()
-		if (!result.success) {
-			port.postMessage(result)
-			return
-		}
-		if (message.type === 'create_room') {
-			if (!VID_ELEM && !isSpotifyClient()) {
-				result = {
-					success: false,
-					data: {
-						message: 'No video in current page. Go to a webpage with video.',
-					},
-				}
-			} else {
-				result = await createRoom(message.roomName)
-			}
-		} else if (message.type === 'join_room') {
-			result = await joinRoom(message.roomName)
-		} else if (message.type === 'leave_room') {
-			result = await leaveRoom(currRoom)
-		} else if (message.type === 'list_rooms') {
-			result = await listRooms()
-		}
-		port.postMessage(result)
-	})
 
 	// Note: keep this below event listeners cuz this block below calls some functions
 	// which ought to trigger the "onmessage" event listener above.

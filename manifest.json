@@ -3,6 +3,11 @@
     "version": "1.0.3",
     "description": "Sync video with each other using a 3rd party facilitating/communication server.",
     "manifest_version": 3,
+    "browser_specific_settings": {
+        "gecko": {
+            "id": "syncer@zznixt.me"
+         }
+    },
     "content_scripts": [
         {
             "matches": [

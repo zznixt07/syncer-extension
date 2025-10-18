@@ -72,31 +72,117 @@ const getServerAddress = async () => {
 
 let BASE_HOST
 let SOCKET
+let socketHandlersAttached = false
+
+// debounce/connect management
+let _pendingConnectTimer = null
+const DEBOUNCE_MS = 1500
+let _lastSavedAddress = null
+let _lastAttemptedAddress = null
+
+const disconnectSocket = async () => {
+    if (!SOCKET) return
+    try {
+        
+		// remove our known event handlers (clear all to be safe)
+		try {
+			SOCKET.removeAllListeners && SOCKET.removeAllListeners()
+		} catch (e) {
+			/* ignore */
+		}
+        
+        if (typeof SOCKET.disconnect === 'function') {
+            SOCKET.disconnect()
+        } else if (typeof SOCKET.close === 'function') {
+            SOCKET.close()
+        }
+    } catch (e) {
+        log('Error while disconnecting socket', e)
+    } finally {
+        SOCKET = null
+        _lastAttemptedAddress = null
+    }
+}
+
+async function connectImmediate(address) {
+    disconnectSocket()
+    if (!address) {
+        log('No server address provided, skipping connect.')
+        return { success: false, data: { message: 'no address' } }
+    }
+
+    _lastAttemptedAddress = address
+    BASE_HOST = address
+
+    try {
+        SOCKET = io(address, {
+            reconnectionAttempts: 0,
+            reconnection: false,
+            transports: ['websocket'],
+        })
+        
+    } catch (e) {
+        log('Error creating socket', e)
+        SOCKET = null
+        return { success: false, data: { message: 'failed to create socket', dbg: e.toString() } }
+    }
+
+    return await new Promise((resolve) => {
+        SOCKET.once('connect', () => {
+            resolve({ success: true, data: { message: 'connected successfully' } })
+        })
+        // if connect_error occurs, resolve with error
+        SOCKET.once('connect_error', (error) => {
+            resolve({
+                success: false,
+                data: {
+                    message: 'error connecting to websocket.',
+                    dbg: error && error.toString ? error.toString() : String(error),
+                },
+            })
+        })
+        // fallback timeout to avoid hanging forever
+        setTimeout(() => {
+            if (!SOCKET || !SOCKET.connected) {
+                resolve({
+                    success: false,
+                    data: { message: 'connection timeout' },
+                })
+            }
+        }, 5000)
+    })
+}
+
+// Debounced entrypoint — call this on every input change but it will only connect
+// after the value remains stable for DEBOUNCE_MS and is different from last attempted address.
+const scheduleConnect = (address) => {
+    _lastSavedAddress = address
+
+    if (_pendingConnectTimer) {
+        clearTimeout(_pendingConnectTimer)
+        _pendingConnectTimer = null
+    }
+    _pendingConnectTimer = setTimeout(async () => {
+        _pendingConnectTimer = null
+        const addr = _lastSavedAddress
+        if (!addr) {
+            disconnectSocket()
+            return
+        }
+        if (addr === _lastAttemptedAddress && SOCKET && SOCKET.connected) {
+            log('Address unchanged and socket already connected, skipping connect.')
+            return
+        }
+        await connectImmediate(addr)
+    }, DEBOUNCE_MS)
+}
 
 const connectToWebSocket = async () => {
-	try {
-		BASE_HOST = await getServerAddress()
-		SOCKET = io(BASE_HOST, {
-			reconnectionAttempts: 5,
-			transports: ['websocket'],
-		})
-	} catch (e) {
-		log('Error', e)
-	}
-	return await new Promise((resolve) => {
-		SOCKET.on('connect', () => {
-			resolve({ success: true, data: { message: 'connected successfully' } })
-		})
-		SOCKET.on('connect_error', (error) => {
-			resolve({
-				success: false,
-				data: {
-					message: 'error connecting to websocket.',
-					dbg: error.toString(),
-				},
-			})
-		})
-	})
+    const addr = await getServerAddress()
+    if (addr) {
+        return await connectImmediate(addr)
+    }
+    return { success: false, data: { message: 'no stored address' } }
 }
 
 const socket_emit = async (eventName, data) => {
@@ -107,6 +193,10 @@ const socket_emit = async (eventName, data) => {
 			SOCKET.emit(eventName, data, (result) => resolve(result))
 		}
 	})
+}
+
+const getServerTime = async () => {
+	return await socket_emit('time_sync', {})
 }
 
 const createRoom = async ({ roomName, meta }) => {
@@ -187,7 +277,9 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
 			await chrome.storage.sync.remove(STORAGE_KEY)
 			reply()
 		} else if (message.type === 'set_server_address') {
-			await chrome.storage.sync.set({ [SERVER_KEY]: message.data })
+			const addr = String(message.data || '').trim()
+			await chrome.storage.sync.set({ [SERVER_KEY]: addr })
+			scheduleConnect(addr)
 			reply()
 		} else if (message.type === 'get_server_address') {
 			reply(await getServerAddress())
@@ -237,6 +329,8 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
 				reply()
 			} else if (message.type === 'get_url_redirect_info') {
 				reply(getRedirectInfo(message.data.url))
+			} else if (message.type === 'request_remote_time') {
+				reply(await getServerTime())
 			}
 		}
 	})()
