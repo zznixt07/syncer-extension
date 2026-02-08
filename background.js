@@ -10,6 +10,7 @@ import { io } from '/lib/socket.io.min.js'
 const EXT_ID = `${chrome.runtime.id}`
 const STORAGE_KEY = `${EXT_ID}_prev_room`
 const SERVER_KEY = `${EXT_ID}_server`
+const ROOM_TOKEN_PREFIX = `${EXT_ID}_room_token_`
 const URLS_REDIRECTS_COUNT = {}
 
 const log = (...msg) => {
@@ -68,6 +69,22 @@ const getServerAddress = async () => {
 	const address = await chrome.storage.sync.get(SERVER_KEY)
 	// log('fetched server address', address[SERVER_KEY])
 	return address[SERVER_KEY]
+}
+
+const getRoomToken = async (roomName) => {
+	const key = `${ROOM_TOKEN_PREFIX}${roomName}`
+	const result = await chrome.storage.local.get(key)
+	return result[key] || null
+}
+
+const setRoomToken = async (roomName, token) => {
+	const key = `${ROOM_TOKEN_PREFIX}${roomName}`
+	await chrome.storage.local.set({ [key]: token })
+}
+
+const removeRoomToken = async (roomName) => {
+	const key = `${ROOM_TOKEN_PREFIX}${roomName}`
+	await chrome.storage.local.remove(key)
 }
 
 let BASE_HOST
@@ -200,7 +217,22 @@ const getServerTime = async () => {
 }
 
 const createRoom = async ({ roomName, meta }) => {
-	return await socket_emit('create_room', { roomName: roomName, data: meta })
+	// Get existing token for potential reclamation
+	const existingToken = await getRoomToken(roomName)
+	const data = { ...meta }
+	if (existingToken) {
+		data.ownerToken = existingToken
+	}
+	
+	const result = await socket_emit('create_room', { roomName: roomName, data: data })
+	
+	// Store the token on success (for new rooms or reclaimed rooms)
+	if (result.success && result.data?.ownerToken) {
+		await setRoomToken(roomName, result.data.ownerToken)
+		log('Stored owner token for room:', roomName)
+	}
+	
+	return result
 }
 
 const listRooms = async () => {
@@ -208,7 +240,12 @@ const listRooms = async () => {
 }
 
 const joinRoom = async ({ roomName }) => {
-	return await socket_emit('join_room', { roomName: roomName })
+	const existingToken = await getRoomToken(roomName)
+	const data = {}
+	if (existingToken) {
+		data.ownerToken = existingToken
+	}
+	return await socket_emit('join_room', { roomName: roomName, data: data })
 }
 
 const leaveRoom = async ({ roomName }) => {

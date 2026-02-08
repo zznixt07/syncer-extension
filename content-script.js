@@ -6,7 +6,7 @@ script.src = chrome.runtime.getURL('main-content-script.js')
 // assign type module so importing is allowed.
 script.type = 'module'
 script.onload = function () {
-	this.remove()
+	// this.remove()
 }
 ;(document.head || document.documentElement).appendChild(script)
 
