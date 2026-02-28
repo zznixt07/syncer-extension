@@ -1,104 +1,86 @@
-
-window.addEventListener('message', async (event) => {
-	// log('message', event)
-	if (
-		event.source !== window ||
-		event.data.type !== 'syncer-extension-bg-to-mcs'
-	) {
-		// log('exiting')
-		return
-	}
-	const port = event.ports[0]
-	const message = event.data.data
-	// log('message/....', message)
-	if (message.type === 'media_event') {
-		if (isSpotifyService(message.data.data)) {
-			log('spotify media event')
-			handleSpotifyStreamEvent(message.data.data)
-		} else {
-			onMediaEvent(message.data)
-		}
-		return port.postMessage({})
-	} else if (message.type === 'sync_room_data') {
-		onSyncRoomEvent()
-		return port.postMessage({})
-	} else if (message.type === 'stream_change') {
-		// peek into the data to figure out the service type
-		// and then navigate to it.
-		if (isSpotifyService(message.data.data)) {
-			const resp = message.data.data
-			if (!isSpotifyClient()) {
-				await setPrevRoomInLS(message.data.roomName)
-				const playlistComps = resp.playlistID.split(':')
-				let rootPath = ''
-				if (playlistComps[1] === 'playlist') {
-					rootPath = '/playlist'
-				} else if (playlistComps[1] === 'album') {
-					rootPath = '/album'
-				}
-				if (rootPath) {
-					window.location.href = `https://open.spotify.com${rootPath}/${playlistComps[2]}`
-				} else {
-					window.location.href = 'https://open.spotify.com'
-				}
-				return
-			}
-			handleSpotifyStreamEvent(resp, true)
-		} else {
-			onStreamChangeEvent(message.data)
-		}
-		return port.postMessage({})
-	}
-
-	VID_ELEM = document.querySelector(
-		'video[src]:not([rel=""]), video > source[src]:not([rel=""])'
-	)
-	// if the source elem was selected, then the real video elem is the parent elem
-	// :has() is upcoming but not supported yet.
-	if (VID_ELEM && VID_ELEM.tagName === 'SOURCE') {
-		VID_ELEM = VID_ELEM.parentElement
-	}
-
-	let result = await connectToWebSocket()
-	if (!result.success) {
-		port.postMessage(result)
-		return
-	}
-	if (message.type === 'create_room') {
-		if (!VID_ELEM && !isSpotifyClient()) {
-			result = {
-				success: false,
-				data: {
-					message: 'No video in current page. Go to a webpage with video.',
-				},
-			}
-		} else {
-			result = await createRoom(message.roomName)
-		}
-	} else if (message.type === 'join_room') {
-		result = await joinRoom(message.roomName)
-	} else if (message.type === 'leave_room') {
-		result = await leaveRoom(currRoom)
-	} else if (message.type === 'list_rooms') {
-		result = await listRooms()
-	}
-	port.postMessage(result)
-})
-
 const sendMessageToBG = async (message) => {
-	return new Promise((resolve) => {
-		const channel = new MessageChannel()
-		channel.port1.onmessage = (event) => {
-			channel.port1.close()
-			resolve(event.data)
-		}
-		window.postMessage(
-			{ type: 'syncer-extension-mcs-to-bg', data: message },
-			'*',
-			[channel.port2]
-		)
+    return new Promise((resolve) => {
+        const channel = new MessageChannel()
+        channel.port1.onmessage = (event) => {
+            channel.port1.close()
+            resolve(event.data)
+        }
+        window.postMessage(
+            { type: 'syncer-extension-mcs-to-bg', data: message },
+            '*',
+            [channel.port2]
+        )
+    })
+}
+
+let VID_ELEM = null
+let _scanObserver = null
+let _scanTimer = null
+
+const findBestVideoElement = () => {
+    let el = document.querySelector('video[src], video > source[src], video')
+    if (el && el.tagName === 'SOURCE') el = el.parentElement
+	sendMessageToBG({ type: 'log', data: `found video element: ${!!el}, src: ${el?.currentSrc || el?.src || 'no src'}, url: ${window.location.href}` })
+    return el || null
+}
+
+const recheckVideoElement = () => {
+    const next = findBestVideoElement()
+    if (!next) return { found: false }
+
+    // avoid duplicate listeners if same node
+    if (VID_ELEM !== next) {
+        if (VID_ELEM) removeVideoEvents()
+        VID_ELEM = next
+		console.log('video element updated:', VID_ELEM)
+        listenToMediaEvents()
+    }
+    return { found: true }
+}
+
+const startAutoVideoScan = () => {
+    recheckVideoElement()
+
+    if (!_scanObserver) {
+        _scanObserver = new MutationObserver(() => recheckVideoElement())
+        _scanObserver.observe(document.documentElement || document, {
+            childList: true,
+            subtree: true,
+            attributes: true,
+            attributeFilter: ['src'],
+        })
+    }
+
+    // fallback polling for JS-heavy players
+    let tries = 0
+    if (_scanTimer) clearInterval(_scanTimer)
+    _scanTimer = setInterval(() => {
+        const res = recheckVideoElement()
+        tries++
+        if (res.found || tries > 90) {
+            clearInterval(_scanTimer)
+            _scanTimer = null
+        }
+    }, 1000)
+}
+
+// startAutoVideoScan()
+// recheckVideoElement()
+
+const connectToWebSocket = async () => {
+	return await sendMessageToBG({
+		type: 'websocket_connect',
 	})
 }
+
+const isYoutubeClient = () =>
+	window.location.host.startsWith('www.youtube.com')
+const isYoutubeService = (data) => data.service === 'youtube'
+const isSpotifyClient = () => window.location.host.startsWith('open.spotify')
+const isSpotifyService = (data) => data.service === 'spotify'
+
+// console.log(await sendMessageToBG({ type: 'log', data: Array.from(document.querySelectorAll('video')).map(e => e.innerHTML) }))
+
 
 const log = (...msg) => {
 	// console.log('CS:', ...msg)
@@ -155,19 +137,6 @@ let CURR_SONG_URI = ''
 let CURR_SONG_URI_OWNERPOV = ''
 let PLAYER_API_STORE
 
-const isYoutubeClient = () =>
-	window.location.host.startsWith('www.youtube.com')
-const isYoutubeService = (data) => data.service === 'youtube'
-const isSpotifyClient = () => window.location.host.startsWith('open.spotify')
-const isSpotifyService = (data) => data.service === 'spotify'
-
-let VID_ELEM = document.querySelector(
-	'video[src]:not([rel=""]), video > source[src]:not([rel=""])'
-)
-
-if (VID_ELEM && VID_ELEM.tagName === 'SOURCE') {
-	VID_ELEM = VID_ELEM.parentElement
-}
 
 const CURR_ROOM_ID = 'currRoom'
 let currRoom = await sendMessageToBG({
@@ -586,11 +555,94 @@ const listRooms = async () => {
 	// })
 	return await sendMessageToBG({ type: 'list_rooms' })
 }
-const connectToWebSocket = async () => {
-	return await sendMessageToBG({
-		type: 'websocket_connect',
-	})
-}
+
+
+window.addEventListener('message', async (event) => {
+    // log('message', event)
+    if (
+        event.source !== window ||
+        event.data.type !== 'syncer-extension-bg-to-mcs'
+    ) {
+        // log('exiting')
+        return
+    }
+    const port = event.ports[0]
+    const message = event.data.data
+
+    if (message.type === 'recheck_video_scan') {
+        const result = findBestVideoElement()
+        return port.postMessage({
+            success: true,
+            data: { found: !!result, message: result ? 'video found' : 'no video found yet' },
+        })
+    }
+
+    if (message.type === 'media_event') {
+        if (isSpotifyService(message.data.data)) {
+            log('spotify media event')
+            handleSpotifyStreamEvent(message.data.data)
+        } else {
+            onMediaEvent(message.data)
+        }
+        return port.postMessage({})
+    } else if (message.type === 'sync_room_data') {
+        onSyncRoomEvent()
+        return port.postMessage({})
+    } else if (message.type === 'stream_change') {
+        // peek into the data to figure out the service type
+        // and then navigate to it.
+        if (isSpotifyService(message.data.data)) {
+            const resp = message.data.data
+            if (!isSpotifyClient()) {
+                await setPrevRoomInLS(message.data.roomName)
+                const playlistComps = resp.playlistID.split(':')
+                let rootPath = ''
+                if (playlistComps[1] === 'playlist') {
+                    rootPath = '/playlist'
+                } else if (playlistComps[1] === 'album') {
+                    rootPath = '/album'
+                }
+                if (rootPath) {
+                    window.location.href = `https://open.spotify.com${rootPath}/${playlistComps[2]}`
+                } else {
+                    window.location.href = 'https://open.spotify.com'
+                }
+                return
+            }
+            handleSpotifyStreamEvent(resp, true)
+        } else {
+            onStreamChangeEvent(message.data)
+        }
+        return port.postMessage({})
+    }
+
+    VID_ELEM = findBestVideoElement()
+
+    let result = await connectToWebSocket()
+    if (!result.success) {
+        port.postMessage(result)
+        return
+    }
+    if (message.type === 'create_room') {
+        if (!VID_ELEM && !isSpotifyClient()) {
+            result = {
+                success: false,
+                data: {
+                    message: 'No video in current page. Go to a webpage with video.',
+                },
+            }
+        } else {
+            result = await createRoom(message.roomName)
+        }
+    } else if (message.type === 'join_room') {
+        result = await joinRoom(message.roomName)
+    } else if (message.type === 'leave_room') {
+        result = await leaveRoom(currRoom)
+    } else if (message.type === 'list_rooms') {
+        result = await listRooms()
+    }
+    port.postMessage(result)
+})
 
 // Note: keep this below event listeners cuz this block below calls some functions
 // which ought to trigger the "onmessage" event listener above.

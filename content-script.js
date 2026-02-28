@@ -38,7 +38,7 @@ window.addEventListener('message', async (event) => {
 
 // send message to script injected in the page (MAIN world)
 const sendMessageToMCS = async (message) => {
-	// log('send msg to MCS from CS', message)
+	log('send msg to MCS from CS', message)
 	return new Promise((resolve) => {
 		const channel = new MessageChannel()
 		channel.port1.onmessage = (event) => {

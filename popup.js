@@ -15,14 +15,7 @@ const getCurrentTabId = async () => {
 
 const tab = await getCurrentTab()
 const url = tab?.url || ''
-if (
-	!url.startsWith('https://www.youtube.com/') &&
-	!url.startsWith('https://music.youtube.com/') &&
-	!url.startsWith('https://open.spotify.com/')
-) {
-	document.body.innerHTML =
-		"<p style='padding:1em;font-size:1.1em;'>This extension only works on YouTube and Spotify.<br>Please open one of those sites to use Syncer.</p>"
-} else {
+if (true) {
 	const success = (message) => {
 		toast(`<span>${message}</span>`, {
 			...{ icon: { type: 'success' } },
@@ -41,20 +34,34 @@ if (
 
 	const sendMessageToCurrTab = async (type, roomName, throwError = false) => {
 		// console.log(`Sending message to current tab: ${type}`);
-		let res
 		const currTabId = await getCurrentTabId()
 		try {
-			res = await chrome.tabs.sendMessage(currTabId, {
+			const res = await chrome.tabs.sendMessage(currTabId, {
 				type: type,
 				roomName: roomName,
 			})
+			console.log(`got resp from curr tab: ${res}`)
+			return res
 		} catch (e) {
 			if (throwError) throw e
-			fail(`Failed on: ${type}: ${e.message}`)
-			res = null
+			fail(`Failed: ${e.message}`)
+			return null
 		}
-		console.log(`got resp from curr tab: ${res}`)
-		return res
+	}
+
+	const sendMessageToVideoFrame = async (type, roomName) => {
+		const currTabId = await getCurrentTabId()
+		try {
+			const result = await chrome.runtime.sendMessage({
+				type: 'forward_to_video_frame',
+				tabId: currTabId,
+				innerMessage: { type, roomName },
+			})
+			return result
+		} catch (e) {
+			fail(`Failed on: ${type}: ${e.message}`)
+			return null
+		}
 	}
 
 	const setIsLoading = (elem, isLoading) => {
@@ -107,6 +114,7 @@ wc-toast-content {
 	const leaveRoomBtn = document.getElementById('leave-room')
 	const listRoomsBtn = document.getElementById('list-rooms')
 	const serverAddressInput = document.getElementById('server-address')
+	const recheckBtn = document.getElementById('recheck-video')
 
 	listRoomsBtn.addEventListener('click', async (e) => {
 		const target = e.currentTarget
@@ -159,7 +167,7 @@ wc-toast-content {
 		const target = e.currentTarget
 		target.disabled = true
 		const currRoomName = document.getElementById('new-room-name').value
-		const result = await sendMessageToCurrTab('create_room', currRoomName)
+		const result = await sendMessageToVideoFrame('create_room', currRoomName)
 		if (result?.success) {
 			success(result.data.message)
 		} else {
@@ -171,6 +179,7 @@ wc-toast-content {
 		const target = e.currentTarget
 		setIsLoading(target, true)
 		const currRoomName = document.getElementById('new-room-name').value
+		// join_room does NOT need a video frame — user might be on a different page
 		const result = await sendMessageToCurrTab('join_room', currRoomName)
 		if (result?.success) {
 			success(result.data.message)
@@ -213,6 +222,33 @@ wc-toast-content {
 	} else if (!errorOnAddress) {
 		await updateServerAddress(serverAddressInput.value)
 	}
+
+	recheckBtn?.addEventListener('click', async (e) => {
+		const target = e.currentTarget
+		setIsLoading(target, true)
+		const currTabId = await getCurrentTabId()
+		try {
+			await chrome.scripting.executeScript({
+				target: { tabId: currTabId, allFrames: true },
+				func: () => {
+					const video = document.querySelector('video')
+					if (video) {
+						chrome.runtime.sendMessage({ type: 'register_video_frame' })
+					}
+				},
+			})
+			// Check if any frame registered
+			const result = await chrome.runtime.sendMessage({
+				type: 'has_video_frame',
+				tabId: currTabId,
+			})
+			if (result?.found) success('Video found')
+			else fail('No video found in any frame')
+		} catch (err) {
+			fail(`Recheck failed: ${err.message}`)
+		}
+		setIsLoading(target, false)
+	})
 
 	// chrome.runtime.onMessage.addListener(async (message, sender, reply) => {
 	//     // if (!sender.tab) return

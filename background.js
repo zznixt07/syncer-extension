@@ -274,19 +274,20 @@ const sendMsgToTab = (tabId, success, msg) =>
 	chrome.tabs.sendMessage(tabId, { success: success, data: msg })
 
 let LISTEN_EVTS_CALLED = 0
-const listenToEvents = (tabId) => {
-	log('Number of times listenEvents() was called:', LISTEN_EVTS_CALLED++)
-	// TODO: use a for loop here to make code DRYer
-	SOCKET.on('media_event', (result) => {
-		log('media event')
-		chrome.tabs.sendMessage(tabId, { type: 'media_event', data: result })
-	})
-	SOCKET.on('sync_room_data', (result) => {
-		chrome.tabs.sendMessage(tabId, { type: 'sync_room_data', data: result })
-	})
-	SOCKET.on('stream_change', (result) => {
-		chrome.tabs.sendMessage(tabId, { type: 'stream_change', data: result })
-	})
+const listenToEvents = (tabId, frameId) => {
+    log('Number of times listenEvents() was called:', LISTEN_EVTS_CALLED++)
+    const opts = frameId != null ? { frameId } : {}
+
+    SOCKET.on('media_event', (result) => {
+        log('media event')
+        chrome.tabs.sendMessage(tabId, { type: 'media_event', data: result }, opts)
+    })
+    SOCKET.on('sync_room_data', (result) => {
+        chrome.tabs.sendMessage(tabId, { type: 'sync_room_data', data: result }, opts)
+    })
+    SOCKET.on('stream_change', (result) => {
+        chrome.tabs.sendMessage(tabId, { type: 'stream_change', data: result }, opts)
+    })
 }
 
 chrome.runtime.onMessage.addListener((message, sender, reply) => {
@@ -320,6 +321,9 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
 			reply()
 		} else if (message.type === 'get_server_address') {
 			reply(await getServerAddress())
+		} else if (message.type === 'log') {
+			console.log('log from content script:', message.data)
+			reply()
 		} else {
 			// gotta connect socket for these.
 			let resp
@@ -372,4 +376,196 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
 		}
 	})()
 	return true
+})
+
+// Map<tabId, frameId> — which frame owns the video
+const videoFrameMap = new Map()
+
+chrome.tabs.onRemoved.addListener((tabId) => {
+    videoFrameMap.delete(tabId)
+})
+chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+    if (changeInfo.status === 'loading') {
+        videoFrameMap.delete(tabId)
+    }
+})
+
+// Commands that MUST go through the video frame
+const VIDEO_FRAME_COMMANDS = new Set([
+    'create_room',
+    'media_event',
+    'sync_room_data',
+    'stream_change',
+    'remove_all_listeners',
+])
+
+// Commands that should work from ANY frame (top frame preferred)
+const ANY_FRAME_COMMANDS = new Set([
+    'join_room',
+    'leave_room',
+    'list_rooms',
+    'websocket_connect',
+])
+
+// Get the top-frame URL for a tab
+const getTopFrameUrl = async (tabId) => {
+    try {
+        const tab = await chrome.tabs.get(tabId)
+        return tab.url
+    } catch (e) {
+        return null
+    }
+}
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    ;(async () => {
+        log('message received', message)
+        if (!message) {
+            sendResponse({})
+            return
+        }
+
+        // --- Storage / simple handlers ---
+        if (message.type === 'set_prev_room') {
+            await chrome.storage.sync.set({ [STORAGE_KEY]: message.data })
+            sendResponse()
+        } else if (message.type === 'set_storage') {
+            const { key, value } = message.data
+            await chrome.storage.sync.set({ [`${STORAGE_KEY}_${key}`]: value })
+            sendResponse(value)
+        } else if (message.type === 'get_storage') {
+            const { key } = message.data
+            const values = await chrome.storage.sync.get(`${STORAGE_KEY}_${key}`)
+            sendResponse(values[`${STORAGE_KEY}_${key}`])
+        } else if (message.type === 'get_prev_room') {
+            const prevRoom = await chrome.storage.sync.get(STORAGE_KEY)
+            sendResponse(prevRoom[STORAGE_KEY])
+        } else if (message.type === 'remove_prev_room') {
+            await chrome.storage.sync.remove(STORAGE_KEY)
+            sendResponse()
+        } else if (message.type === 'set_server_address') {
+            const addr = String(message.data || '').trim()
+            await chrome.storage.sync.set({ [SERVER_KEY]: addr })
+            scheduleConnect(addr)
+            sendResponse()
+        } else if (message.type === 'get_server_address') {
+            sendResponse(await getServerAddress())
+        } else if (message.type === 'log') {
+            console.log('log from content script:', message.data)
+            sendResponse()
+        } else if (message.type === 'increment_redirect_count') {
+            incrementRedirectCount(message.data.url)
+            sendResponse()
+        } else if (message.type === 'get_url_redirect_info') {
+            sendResponse(getRedirectInfo(message.data.url))
+
+        // --- Video frame registration ---
+        } else if (message.type === 'register_video_frame') {
+            const tabId = sender.tab?.id
+            const frameId = sender.frameId
+            if (tabId != null && frameId != null) {
+                videoFrameMap.set(tabId, frameId)
+                log(`Registered video frame: tab=${tabId}, frame=${frameId}`)
+            }
+            sendResponse({ success: true })
+        } else if (message.type === 'has_video_frame') {
+            const found = videoFrameMap.has(message.tabId)
+            sendResponse({ success: true, found })
+
+        // --- Forward to video frame ---
+        } else if (message.type === 'forward_to_video_frame') {
+            const tabId = message.tabId
+            const innerMsg = message.innerMessage
+            const frameId = videoFrameMap.get(tabId)
+            const needsVideoFrame = VIDEO_FRAME_COMMANDS.has(innerMsg.type)
+
+            if (needsVideoFrame && frameId == null) {
+                sendResponse({
+                    success: false,
+                    data: { message: 'No video frame registered. Click "Recheck Video" first.' },
+                })
+                return
+            }
+
+            // For video-frame commands, also inject the top-frame URL
+            if (needsVideoFrame) {
+                const topUrl = await getTopFrameUrl(tabId)
+                if (topUrl) {
+                    innerMsg.data = innerMsg.data || {}
+                    innerMsg.data.topFrameUrl = topUrl
+                }
+            }
+
+            try {
+                // Route to video frame if registered & needed, otherwise top frame
+                const opts = (frameId != null && needsVideoFrame) ? { frameId } : {}
+                const result = await chrome.tabs.sendMessage(tabId, innerMsg, opts)
+                sendResponse(result)
+            } catch (e) {
+                sendResponse({
+                    success: false,
+                    data: { message: e.message },
+                })
+            }
+
+        // --- Socket-dependent commands (direct from content script) ---
+        } else {
+            let resp
+            if (!SOCKET || !SOCKET.connected) {
+                resp = await connectToWebSocket()
+            }
+            if (message.type === 'websocket_connect') {
+                if (resp) {
+                    sendResponse(resp)
+                } else {
+                    sendResponse({
+                        success: true,
+                        data: { message: 'already connected to websocket' },
+                    })
+                }
+            } else if (message.type === 'create_room') {
+                // Inject top-frame URL into meta
+                if (sender.tab?.id) {
+                    const topUrl = await getTopFrameUrl(sender.tab.id)
+                    if (topUrl && message.data?.meta) {
+                        message.data.meta.url = topUrl
+                    }
+                }
+                const res = await createRoom(message.data)
+                if (res.success) {
+                    const tabId = sender.tab.id
+                    const frameId = videoFrameMap.get(tabId) ?? sender.frameId
+                    listenToEvents(tabId, frameId)
+                }
+                sendResponse(res)
+            } else if (message.type === 'join_room') {
+                const res = await joinRoom(message.data)
+                if (res.success) {
+                    const tabId = sender.tab.id
+                    const frameId = videoFrameMap.get(tabId) ?? sender.frameId
+                    listenToEvents(tabId, frameId)
+                }
+                sendResponse(res)
+            } else if (message.type === 'list_rooms') {
+                sendResponse(await listRooms())
+            } else if (message.type === 'leave_room') {
+                sendResponse(await leaveRoom(message.data))
+            } else if (message.type === 'media_event') {
+                sendMediaEvent(message.data)
+                sendResponse()
+            } else if (message.type === 'sync_room_data') {
+                requestEventFromOwner(message.data)
+                sendResponse()
+            } else if (message.type === 'stream_change') {
+                sendStreamChangeEvent(message.data)
+                sendResponse()
+            } else if (message.type === 'remove_all_listeners') {
+                SOCKET.removeAllListeners()
+                sendResponse()
+            } else if (message.type === 'request_remote_time') {
+                sendResponse(await getServerTime())
+            }
+        }
+    })()
+    return true
 })

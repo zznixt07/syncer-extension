@@ -11,10 +11,10 @@
     "content_scripts": [
         {
             "matches": [
-                "https://www.youtube.com/*",
-                "https://music.youtube.com/*",
-                "https://open.spotify.com/*"
+                "<all_urls>"
             ],
+            "all_frames": true,
+            "match_about_blank": true,
             "run_at": "document_idle",
             "js": [
                 "content-script.js"
@@ -32,12 +32,11 @@
     },
     "permissions": [
         "storage",
-        "tabs"
+        "tabs",
+        "scripting"
     ],
     "host_permissions": [
-        "https://www.youtube.com/*",
-        "https://music.youtube.com/*",
-        "https://open.spotify.com/*"
+        "<all_urls>"
     ],
     "web_accessible_resources": [
         {
@@ -46,9 +45,7 @@
                 "main-content-script.js"
             ],
             "matches": [
-                "https://www.youtube.com/*",
-                "https://music.youtube.com/*",
-                "https://open.spotify.com/*"
+                "<all_urls>"
             ]
         }
     ],
