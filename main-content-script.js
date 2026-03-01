@@ -13,14 +13,58 @@ const sendMessageToBG = async (message) => {
     })
 }
 
+const sendLogToBG = async (message) => {
+	// return await sendMessageToBG({ type: 'log', data: message })
+}
+
 let VID_ELEM = null
 let _scanObserver = null
 let _scanTimer = null
 
+// The top-frame URL — needed because this script may run inside an iframe
+// where window.location.href is about:blank or the iframe's own URL.
+let TOP_FRAME_URL = null
+try {
+	TOP_FRAME_URL = window.top.location.href
+} catch (_) {
+	// cross-origin iframe — will be fetched from background
+}
+if (!TOP_FRAME_URL || TOP_FRAME_URL === 'about:blank') {
+	const resp = await sendMessageToBG({ type: 'get_top_frame_url' })
+	if (resp) TOP_FRAME_URL = resp
+}
+
+// Returns the current top-frame URL. For same-origin iframes or top frame,
+// reads window.top.location.href directly (catches SPA navigations).
+// For cross-origin iframes, falls back to asking the background.
+const getTopURL = async () => {
+	try {
+		return window.top.location.href
+	} catch (_) {
+		const resp = await sendMessageToBG({ type: 'get_top_frame_url' })
+		if (resp) TOP_FRAME_URL = resp
+		return TOP_FRAME_URL || window.location.href
+	}
+}
+
+// Synchronous version — uses cached TOP_FRAME_URL (good enough for event handlers)
+const getTopURLSync = () => {
+	try {
+		return window.top.location.href
+	} catch (_) {
+		return TOP_FRAME_URL || window.location.href
+	}
+}
+
+// Navigate the top-level tab (not just the iframe) to a new URL
+const navigateTab = async (url) => {
+	await sendMessageToBG({ type: 'navigate_tab', data: { url } })
+}
+
 const findBestVideoElement = () => {
     let el = document.querySelector('video[src], video > source[src], video')
     if (el && el.tagName === 'SOURCE') el = el.parentElement
-	sendMessageToBG({ type: 'log', data: `found video element: ${!!el}, src: ${el?.currentSrc || el?.src || 'no src'}, url: ${window.location.href}` })
+	// sendMessageToBG({ type: 'log', data: `found video element: ${!!el}, src: ${el?.currentSrc || el?.src || 'no src'}, url: ${window.location.href}` })
     return el || null
 }
 
@@ -32,7 +76,7 @@ const recheckVideoElement = () => {
     if (VID_ELEM !== next) {
         if (VID_ELEM) removeVideoEvents()
         VID_ELEM = next
-		console.log('video element updated:', VID_ELEM)
+		// console.log('video element updated:', VID_ELEM)
         listenToMediaEvents()
     }
     return { found: true }
@@ -128,9 +172,35 @@ const removePrevRoomFromLS = async () => {
 	await sendMessageToBG({ type: 'remove_prev_room' })
 }
 
-const clockOffset = await estimateClockOffset()
-// const clockOffset = 0
-const OFFSET_TIME_MS = clockOffset.offset
+let OFFSET_TIME_MS = 0
+let _initialized = false
+
+const initializeFrame = async () => {
+	if (_initialized) return
+	_initialized = true
+
+	const clockOffset = await estimateClockOffset()
+	OFFSET_TIME_MS = clockOffset.offset
+
+	currRoom = await sendMessageToBG({
+		type: 'get_storage',
+		data: { key: CURR_ROOM_ID },
+	})
+	currUrl = getTopURLSync()
+	const prevRoomName = await getPrevRoomFromLS()
+
+	if (prevRoomName) {
+		await removePrevRoomFromLS()
+		const result = await connectToWebSocket()
+		if (result.success) {
+			await joinRoom(prevRoomName)
+			const timeoutMs = 1000
+			setTimeout(() => requestEventFromOwner(prevRoomName), timeoutMs * 2.2)
+			setTimeout(() => requestEventFromOwner(prevRoomName), timeoutMs * 5.1)
+			setTimeout(() => requestEventFromOwner(prevRoomName), timeoutMs * 7.9)
+		}
+	}
+}
 
 const spotifyRootElemSelector = '[data-testid="root"]'
 let CURR_SONG_URI = ''
@@ -139,13 +209,8 @@ let PLAYER_API_STORE
 
 
 const CURR_ROOM_ID = 'currRoom'
-let currRoom = await sendMessageToBG({
-	type: 'get_storage',
-	data: { key: CURR_ROOM_ID },
-})
-let currUrl = window.location.href
-const prevRoomName = await getPrevRoomFromLS()
-const WAS_REDIRECTED = !!prevRoomName
+let currRoom = null
+let currUrl = getTopURLSync()
 
 const getPropertyBeginningWith = (propPrefix, elem) => {
 	const reactProps = Object.getOwnPropertyNames(elem)
@@ -258,7 +323,7 @@ const getVideoCurrentState = (data) => {
 		resolution: '720p',
 		isCCOn: true,
 		playbackRate: VID_ELEM?.playbackRate || 1,
-		url: window.location.href,
+		url: getTopURLSync(),
 	}
 }
 
@@ -279,6 +344,7 @@ const requestEventFromOwner = (roomName) => {
 const onMediaEvent = async (result) => {
 	log('called onMediaEvent', result)
 	const { roomName, data } = result
+	await sendLogToBG(`called onMediaEvent' ${result}`)
 	// if (!WAS_REDIRECTED) {
 	// if this did not came from a redirection, only then think about redirection.
 	// 	if (window.location.href !== data.url) {
@@ -310,6 +376,7 @@ const onMediaEvent = async (result) => {
 		VID_ELEM.muted = data.isMuted
 	} else {
 		log('no video element found to act on media event')
+		await sendLogToBG('no video element found to act on media event')
 	}
 }
 
@@ -336,7 +403,7 @@ const onStreamChangeEvent = async (resp) => {
 	// the url could be slightly different.
 	// so, stream_change should have a dedicated event.
 	const recvdURL = resp.data.url
-	const currURL = window.location.href
+	const currURL = getTopURLSync()
 	if (recvdURL !== currURL) {
 		// special case for youtube playlist
 		if (recvdURL.includes('list=')) {
@@ -363,7 +430,7 @@ const onStreamChangeEvent = async (resp) => {
 			},
 		})
 		await setPrevRoomInLS(resp.roomName)
-		window.location.href = recvdURL
+		await navigateTab(recvdURL)
 		return
 	}
 }
@@ -399,10 +466,11 @@ const sendStallEvent = () => {
 const sendPlayEvent = async () => {
 	// in case of SPA, when the stream changes the new video generates a play event.
 	// we can use that to detect the stream change.
-	if (currUrl !== window.location.href) {
+	const topUrl = getTopURLSync()
+	if (currUrl !== topUrl) {
 		// stream changed
 		await sendStreamChangeEvent()
-		currUrl = window.location.href
+		currUrl = topUrl
 		return
 	}
 	sendMediaEvent()
@@ -495,7 +563,7 @@ const createRoom = async (roomName) => {
 	})
 	if (result.success) {
 		// if room was created, we are the owner now and we should install listeners for media events to forward to room members.
-		currUrl = window.location.href
+		currUrl = getTopURLSync()
 		currRoom = await sendMessageToBG({
 			type: 'set_storage',
 			data: { key: CURR_ROOM_ID, value: roomName },
@@ -577,6 +645,29 @@ window.addEventListener('message', async (event) => {
         })
     }
 
+    if (message.type === 'cleanup_after_leave') {
+        currRoom = null
+        if (message.isOwner) {
+            removeVideoEvents()
+        }
+        return port.postMessage({ success: true })
+    }
+
+    if (message.type === 'setup_after_join') {
+        await initializeFrame()
+        currRoom = message.roomName
+        await sendMessageToBG({
+            type: 'set_storage',
+            data: { key: CURR_ROOM_ID, value: message.roomName },
+        })
+		VID_ELEM = findBestVideoElement()
+		await sendLogToBG('setupafterjoin, video element: ' + !!VID_ELEM)
+        if (message.isOwner) {
+            listenToMediaEvents()
+        }
+        return port.postMessage({ success: true })
+    }
+
     if (message.type === 'media_event') {
         if (isSpotifyService(message.data.data)) {
             log('spotify media event')
@@ -603,9 +694,9 @@ window.addEventListener('message', async (event) => {
                     rootPath = '/album'
                 }
                 if (rootPath) {
-                    window.location.href = `https://open.spotify.com${rootPath}/${playlistComps[2]}`
+                    await navigateTab(`https://open.spotify.com${rootPath}/${playlistComps[2]}`)
                 } else {
-                    window.location.href = 'https://open.spotify.com'
+                    await navigateTab('https://open.spotify.com')
                 }
                 return
             }
@@ -617,6 +708,8 @@ window.addEventListener('message', async (event) => {
     }
 
     VID_ELEM = findBestVideoElement()
+
+    await initializeFrame()
 
     let result = await connectToWebSocket()
     if (!result.success) {
@@ -637,32 +730,15 @@ window.addEventListener('message', async (event) => {
     } else if (message.type === 'join_room') {
         result = await joinRoom(message.roomName)
     } else if (message.type === 'leave_room') {
-        result = await leaveRoom(currRoom)
+        result = await leaveRoom(message.roomName || currRoom)
     } else if (message.type === 'list_rooms') {
         result = await listRooms()
     }
     port.postMessage(result)
 })
 
-// Note: keep this below event listeners cuz this block below calls some functions
-// which ought to trigger the "onmessage" event listener above.
-// if that event listener is not set up, then the funntions below would keep waiting until timeout.
-if (prevRoomName) {
-	await removePrevRoomFromLS()
-	// log('previous room found: ', prevRoomName)
-	const result = await connectToWebSocket()
-	if (result.success) {
-		currUrl = window.location.href
-		await joinRoom(prevRoomName)
-		// sometimes the video is stll streaming after being freshly loaded
-		// and the media_event from the owner could arrive while buffering
-		// which will put the video out of sync. hence, after sometime,
-		// request the owner to send the media_event again.
-		const timeoutMs = 1000
-		setTimeout(() => requestEventFromOwner(prevRoomName), timeoutMs * 2.2)
-		setTimeout(() => requestEventFromOwner(prevRoomName), timeoutMs * 5.1)
-		setTimeout(() => requestEventFromOwner(prevRoomName), timeoutMs * 7.9)
-	}
-} else {
-	// log('prev room not found')
+// Only auto-initialize in the top frame (for redirect/rejoin flow).
+// Subframes stay dormant until explicitly activated via a command.
+if (window.top === window.self) {
+	await initializeFrame()
 }

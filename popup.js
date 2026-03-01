@@ -32,6 +32,16 @@ if (true) {
 		})
 	}
 
+	// Send message directly to background (not via content scripts)
+	const sendMessageToBG = async (type, data) => {
+		try {
+			return await chrome.runtime.sendMessage({ type, data })
+		} catch (e) {
+			fail(`Failed: ${e.message}`)
+			return null
+		}
+	}
+
 	const sendMessageToCurrTab = async (type, roomName, throwError = false) => {
 		// console.log(`Sending message to current tab: ${type}`);
 		const currTabId = await getCurrentTabId()
@@ -116,11 +126,30 @@ wc-toast-content {
 	const serverAddressInput = document.getElementById('server-address')
 	const recheckBtn = document.getElementById('recheck-video')
 
+	// Scans all frames for a video element and registers the frame that has one
+	const recheckVideoFrames = async () => {
+		const currTabId = await getCurrentTabId()
+		await chrome.scripting.executeScript({
+			target: { tabId: currTabId, allFrames: true },
+			func: () => {
+				const video = document.querySelector('video')
+				if (video) {
+					chrome.runtime.sendMessage({ type: 'register_video_frame' })
+				}
+			},
+		})
+		const result = await chrome.runtime.sendMessage({
+			type: 'has_video_frame',
+			tabId: currTabId,
+		})
+		return !!result?.found
+	}
+
 	listRoomsBtn.addEventListener('click', async (e) => {
 		const target = e.currentTarget
 		setIsLoading(target, true)
 		const currRoomName = document.getElementById('new-room-name').value
-		const result = await sendMessageToCurrTab('list_rooms', currRoomName)
+		const result = await sendMessageToBG('list_rooms')
 		if (result?.success) {
 			const dataList = document.getElementById('rooms')
 			const roomList = document.querySelector('pre#rooms-list')
@@ -167,6 +196,15 @@ wc-toast-content {
 		const target = e.currentTarget
 		target.disabled = true
 		const currRoomName = document.getElementById('new-room-name').value
+
+		// Auto-recheck for video before creating room
+		const found = await recheckVideoFrames()
+		if (!found) {
+			fail('No video found in any frame.')
+			target.disabled = false
+			return
+		}
+
 		const result = await sendMessageToVideoFrame('create_room', currRoomName)
 		if (result?.success) {
 			success(result.data.message)
@@ -179,8 +217,12 @@ wc-toast-content {
 		const target = e.currentTarget
 		setIsLoading(target, true)
 		const currRoomName = document.getElementById('new-room-name').value
-		// join_room does NOT need a video frame — user might be on a different page
-		const result = await sendMessageToCurrTab('join_room', currRoomName)
+		const currTabId = await getCurrentTabId()
+
+		// Pre-register the video frame (if any) so background can target it
+		await recheckVideoFrames()
+
+		const result = await sendMessageToBG('join_room', { roomName: currRoomName, tabId: currTabId })
 		if (result?.success) {
 			success(result.data.message)
 		} else {
@@ -192,7 +234,8 @@ wc-toast-content {
 		const target = e.currentTarget
 		setIsLoading(target, true)
 		const currRoomName = document.getElementById('new-room-name').value
-		const result = await sendMessageToCurrTab('leave_room', currRoomName)
+		const currTabId = await getCurrentTabId()
+		const result = await sendMessageToBG('leave_room', { roomName: currRoomName, tabId: currTabId })
 		if (result?.success) {
 			success(result.data.message)
 		} else {
@@ -207,12 +250,12 @@ wc-toast-content {
 	})
 
 	const updateServerAddress = async (newAddress) => {
-		await sendMessageToCurrTab('set_server_address', newAddress)
+		await sendMessageToBG('set_server_address', newAddress)
 	}
 	let storedServerAddress = ''
 	let errorOnAddress = false
 	try {
-		storedServerAddress = await sendMessageToCurrTab('get_server_address', null, true)
+		storedServerAddress = await sendMessageToBG('get_server_address')
 	} catch (e) {
 		errorOnAddress = true
 		fail(`Error getting stored server address: ${e.message}`)
@@ -226,23 +269,9 @@ wc-toast-content {
 	recheckBtn?.addEventListener('click', async (e) => {
 		const target = e.currentTarget
 		setIsLoading(target, true)
-		const currTabId = await getCurrentTabId()
 		try {
-			await chrome.scripting.executeScript({
-				target: { tabId: currTabId, allFrames: true },
-				func: () => {
-					const video = document.querySelector('video')
-					if (video) {
-						chrome.runtime.sendMessage({ type: 'register_video_frame' })
-					}
-				},
-			})
-			// Check if any frame registered
-			const result = await chrome.runtime.sendMessage({
-				type: 'has_video_frame',
-				tabId: currTabId,
-			})
-			if (result?.found) success('Video found')
+			const found = await recheckVideoFrames()
+			if (found) success('Video found')
 			else fail('No video found in any frame')
 		} catch (err) {
 			fail(`Recheck failed: ${err.message}`)
