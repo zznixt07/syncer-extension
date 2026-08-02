@@ -538,6 +538,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         } else if (message.type === 'has_video_frame') {
             const found = videoFrameMap.has(message.tabId)
             sendResponse({ success: true, found })
+        } else if (message.type === 'playback_blocked') {
+            // Autoplay policy stopped us resuming. Say so in the toolbar tooltip
+            // rather than the badge, which is showing the user count.
+            const tabId = sender.tab?.id
+            if (tabId != null) {
+                chrome.action.setTitle({
+                    tabId,
+                    title: message.data?.blocked
+                        ? 'Syncer: playback blocked — click the page to resume'
+                        : 'Syncer',
+                }).catch(() => {})
+            }
+            sendResponse({ success: true })
         } else if (message.type === 'get_room_status') {
             // Answered from cached state only — must never force a connect.
             const tabId = message.data?.tabId ?? sender.tab?.id

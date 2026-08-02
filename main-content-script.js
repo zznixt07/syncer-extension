@@ -341,6 +341,33 @@ const requestEventFromOwner = (roomName) => {
 	})
 }
 
+// Programmatic play() is rejected when the page has had no user gesture yet.
+// The rejection used to go unhandled, leaving the guest silently paused.
+let _pendingGestureRetry = false
+const playSafely = async (video) => {
+	try {
+		await video.play()
+		_pendingGestureRetry = false
+		await sendMessageToBG({ type: 'playback_blocked', data: { blocked: false } })
+	} catch (e) {
+		log('play() was blocked', e)
+		await sendLogToBG(`play() blocked: ${e?.message}`)
+		await sendMessageToBG({ type: 'playback_blocked', data: { blocked: true } })
+		if (_pendingGestureRetry) return
+		_pendingGestureRetry = true
+		// Retry on the next real interaction anywhere on the page, which is
+		// exactly the gesture the autoplay policy was waiting for.
+		const retry = () => {
+			document.removeEventListener('pointerdown', retry, true)
+			document.removeEventListener('keydown', retry, true)
+			_pendingGestureRetry = false
+			if (VID_ELEM && VID_ELEM.paused) playSafely(VID_ELEM)
+		}
+		document.addEventListener('pointerdown', retry, true)
+		document.addEventListener('keydown', retry, true)
+	}
+}
+
 const onMediaEvent = async (result) => {
 	log('called onMediaEvent', result)
 	const { roomName, data } = result
@@ -363,7 +390,7 @@ const onMediaEvent = async (result) => {
 		if (data.mediaState === 'buffer' && !VID_ELEM.paused) {
 			VID_ELEM.pause()
 		} else if (data.mediaState === 'play' && VID_ELEM.paused) {
-			VID_ELEM.play()
+			await playSafely(VID_ELEM)
 		} else if (data.mediaState === 'pause' && !VID_ELEM.paused) {
 			VID_ELEM.pause()
 		}
