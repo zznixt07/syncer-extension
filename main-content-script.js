@@ -495,6 +495,9 @@ const listenToMediaEvents = () => {
 	// VID_ELEM.addEventListener('volumechange', sendMediaEvent)
 	VID_ELEM.addEventListener('ratechange', sendMediaEvent)
 	VID_ELEM.addEventListener('waiting', sendStallEvent)
+	// 'waiting' pauses everyone else. Recovery from buffering fires 'playing',
+	// not 'play', so without this nobody is ever told to resume.
+	VID_ELEM.addEventListener('playing', sendPlayEvent)
 }
 
 const listenToSpotifyAudioEvents = () => {
@@ -522,6 +525,7 @@ const removeVideoEvents = () => {
 	// VID_ELEM.removeEventListener('volumechange', sendMediaEvent)
 	VID_ELEM.removeEventListener('ratechange', sendMediaEvent)
 	VID_ELEM.removeEventListener('waiting', sendStallEvent)
+	VID_ELEM.removeEventListener('playing', sendPlayEvent)
 }
 
 const requestDataForCurrentRoom = () => {
