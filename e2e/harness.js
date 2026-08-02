@@ -37,14 +37,37 @@ const startFixtureServer = async () => {
 	const types = { '.html': 'text/html', '.mp4': 'video/mp4', '.js': 'text/javascript' }
 	const server = http.createServer((req, res) => {
 		const rel = decodeURIComponent(req.url.split('?')[0])
+		if (rel === '/favicon.ico') {
+			res.writeHead(204).end()
+			return
+		}
 		const file = path.join(FIXTURE_DIR, rel)
 		if (!file.startsWith(FIXTURE_DIR) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) {
 			res.writeHead(404).end()
 			return
 		}
+		const size = fs.statSync(file).size
+		const type = types[path.extname(file)] ?? 'application/octet-stream'
+
+		// Without byte ranges Chrome reports seekable.end === 0 and refuses to
+		// seek at all, which quietly turns every seek test into a no-op.
+		const range = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range ?? '')
+		if (range) {
+			const start = range[1] ? Number(range[1]) : 0
+			const end = range[2] ? Number(range[2]) : size - 1
+			res.writeHead(206, {
+				'content-type': type,
+				'accept-ranges': 'bytes',
+				'content-range': `bytes ${start}-${end}/${size}`,
+				'content-length': end - start + 1,
+			})
+			fs.createReadStream(file, { start, end }).pipe(res)
+			return
+		}
 		res.writeHead(200, {
-			'content-type': types[path.extname(file)] ?? 'application/octet-stream',
-			'accept-ranges': 'none',
+			'content-type': type,
+			'accept-ranges': 'bytes',
+			'content-length': size,
 		})
 		fs.createReadStream(file).pipe(res)
 	})
@@ -102,7 +125,7 @@ Chrome 137+ ignores --load-extension, so the extension goes in over CDP.
 Playwright also passes --disable-extensions by default, which silently
 disables it again; hence ignoreDefaultArgs.
 */
-const launchClient = async ({ headless, autoplay = true }) => {
+const launchClient = async ({ headless }) => {
 	const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'syncer-e2e-'))
 	const context = await chromium.launchPersistentContext(profile, {
 		channel: 'chrome',
@@ -113,7 +136,10 @@ const launchClient = async ({ headless, autoplay = true }) => {
 			// video with an audio track can reject for reasons unrelated to
 			// the autoplay policy we actually want to test.
 			'--mute-audio',
-			...(autoplay ? ['--autoplay-policy=no-user-gesture-required'] : []),
+			// Stated for the record rather than for effect: Chrome does not
+			// apply its autoplay policy to a localhost fixture either way. See
+			// the blocked-playback test for how that case is covered instead.
+			'--autoplay-policy=no-user-gesture-required',
 		],
 	})
 	const cdp = await context.browser().newBrowserCDPSession()
@@ -163,8 +189,8 @@ export const test = base.extend({
 		const opened = []
 		const headless = !process.env.SYNCER_E2E_HEADED
 
-		const newClient = async (label, { autoplay = true } = {}) => {
-			const client = await launchClient({ headless, autoplay })
+		const newClient = async (label) => {
+			const client = await launchClient({ headless })
 			opened.push(client)
 			const { context, extensionId } = client
 

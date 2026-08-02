@@ -37,8 +37,13 @@ messaging, the sockets — is real.
 
 - The toolbar badge. `chrome.action` state is not readable from a page; asserting
   on it would need a separate CDP surface that Chrome does not expose.
-- Real autoplay blocking, unless `autoplay: false` is passed to `newClient` —
-  the default `--autoplay-policy=no-user-gesture-required` exists so the other
-  tests don't have to fake a gesture.
+- Real autoplay blocking. Chrome does not apply its autoplay policy to a
+  localhost fixture — not headless, not headed, not with `--autoplay-policy`
+  set to anything. The blocked-playback test fakes the rejection by overriding
+  `HTMLMediaElement.prototype.play`; the gesture listener and retry it exercises
+  are real.
+- Byte ranges are served by the fixture server on purpose. Without them Chrome
+  reports `seekable.end === 0` and silently refuses every seek, which makes seek
+  tests pass by doing nothing.
 - Anything about how a specific site's player (YouTube, hls.js) behaves. The
   fixture is a plain `<video>`.
