@@ -77,7 +77,11 @@ const recheckVideoElement = () => {
 
     // avoid duplicate listeners if same node
     if (VID_ELEM !== next) {
-        if (VID_ELEM) removeVideoEvents()
+        if (VID_ELEM) {
+            cancelNudge(VID_ELEM)
+            removeVideoEvents()
+        }
+        _nudgeAttempts = 0
         VID_ELEM = next
 		// console.log('video element updated:', VID_ELEM)
         // Only the owner broadcasts. Re-attaching for a guest would turn it
@@ -373,6 +377,64 @@ const requestEventFromOwner = (roomName) => {
 	})
 }
 
+/*
+Correcting position by assigning currentTime forces a seek, and a seek costs a
+re-buffer and a visible stutter on most players. Below the threshold it is
+cheaper to run slightly fast or slow for a moment and let the drift close on
+its own.
+*/
+const DRIFT_HARD_SEEK_S = 0.35 // beyond this, a seek is worth its cost
+const DRIFT_IGNORE_S = 0.05 // already close enough; leave it alone
+const NUDGE_FACTOR = 0.02 // ±2%: inaudible, and preservesPitch keeps it clean
+const NUDGE_DURATION_MS = 3000
+const MAX_NUDGE_ATTEMPTS = 2 // then give up and seek
+
+let _nudgeTimer = null
+let _nudgeAttempts = 0
+let _nudgeBaseRate = 1
+
+const cancelNudge = (video) => {
+	if (!_nudgeTimer) return
+	clearTimeout(_nudgeTimer)
+	_nudgeTimer = null
+	if (video) video.playbackRate = _nudgeBaseRate
+}
+
+const isLiveStream = (video) => !isFinite(video.duration) || video.duration === 0
+
+// Returns true if it took responsibility for the drift, false to fall back to a seek.
+const nudgePlaybackRate = (video, drift, roomRate) => {
+	// Live players (hls.js, low-latency Twitch) drive playbackRate themselves
+	// to manage the live edge; fighting them oscillates.
+	if (isLiveStream(video) || video.paused) return false
+	if (_nudgeAttempts >= MAX_NUDGE_ATTEMPTS) return false
+
+	// Nudge relative to the room's rate — the host may be watching at 2x.
+	const base = roomRate || video.playbackRate || 1
+	// drift > 0 means we are ahead of the host, so slow down.
+	const target = base * (drift > 0 ? 1 - NUDGE_FACTOR : 1 + NUDGE_FACTOR)
+
+	cancelNudge(null)
+	_nudgeBaseRate = base
+	video.preservesPitch = true
+	video.playbackRate = target
+
+	// Some players refuse or immediately revert the change. Read it back rather
+	// than assuming it stuck.
+	if (Math.abs(video.playbackRate - target) > 0.001) {
+		video.playbackRate = base
+		_nudgeAttempts = MAX_NUDGE_ATTEMPTS // don't keep trying on this player
+		return false
+	}
+
+	_nudgeAttempts++
+	_nudgeTimer = setTimeout(() => {
+		_nudgeTimer = null
+		video.playbackRate = _nudgeBaseRate
+	}, NUDGE_DURATION_MS)
+	return true
+}
+
 // Programmatic play() is rejected when the page has had no user gesture yet.
 // The rejection used to go unhandled, leaving the guest silently paused.
 let _pendingGestureRetry = false
@@ -415,22 +477,50 @@ const onMediaEvent = async (result) => {
 	if (VID_ELEM) {
 		log('VID ELEM settig state')
 		if (!isNaN(parseFloat(data.timestamp))) {
-			// code to take latency into account.
-			VID_ELEM.currentTime =
-				data.timestamp + (correctedNow() - data.tms) / 1000
+			// Only advance the sender's position by transit time if it was
+			// actually playing — a paused sender's clock isn't moving.
+			const inFlightS =
+				data.mediaState === 'play' ? (correctedNow() - data.tms) / 1000 : 0
+			const targetTime = data.timestamp + inFlightS
+			const drift = VID_ELEM.currentTime - targetTime
+
+			if (Math.abs(drift) >= DRIFT_HARD_SEEK_S) {
+				cancelNudge(VID_ELEM)
+				_nudgeAttempts = 0
+				VID_ELEM.currentTime = targetTime
+			} else if (Math.abs(drift) > DRIFT_IGNORE_S) {
+				// Too small to be worth a stutter — close it by running slightly
+				// off-speed, and only seek if the player won't cooperate.
+				if (!nudgePlaybackRate(VID_ELEM, drift, data.playbackRate)) {
+					VID_ELEM.currentTime = targetTime
+				}
+			} else {
+				// In sync. Reset so a later drift gets a fresh set of attempts.
+				cancelNudge(VID_ELEM)
+				_nudgeAttempts = 0
+			}
 		}
 		if (data.mediaState === 'buffer' && !VID_ELEM.paused) {
+			cancelNudge(VID_ELEM)
 			VID_ELEM.pause()
 		} else if (data.mediaState === 'play' && VID_ELEM.paused) {
 			await playSafely(VID_ELEM)
 		} else if (data.mediaState === 'pause' && !VID_ELEM.paused) {
+			cancelNudge(VID_ELEM)
 			VID_ELEM.pause()
 		}
 		// if (parseFloat(data.volume) !== NaN) {
 		// 	VID_ELEM.volume = data.volume
 		// }
 		if (!isNaN(parseFloat(data.playbackRate))) {
-			VID_ELEM.playbackRate = data.playbackRate
+			if (_nudgeTimer) {
+				// Applying it now would wipe the correction on the very next
+				// event and it would never converge. Just keep the restore
+				// target current in case the host changes speed mid-nudge.
+				_nudgeBaseRate = data.playbackRate
+			} else {
+				VID_ELEM.playbackRate = data.playbackRate
+			}
 		}
 		VID_ELEM.muted = data.isMuted
 	} else {
