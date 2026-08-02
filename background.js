@@ -355,6 +355,30 @@ const listenToEvents = (tabId, frameId) => {
 // Map<tabId, { roomName, isOwner }>
 const activeTabSessions = new Map()
 
+/*
+MV3 terminates the service worker when it goes idle, taking SOCKET and every
+Map in this file with it. Mirror the sessions into storage.session (which is
+in-memory and cleared on browser restart, so it can't resurrect a stale room
+days later) and rebuild on wake.
+*/
+const SESSIONS_KEY = `${EXT_ID}_active_sessions`
+
+const persistSessions = () => {
+    return chrome.storage.session
+        .set({ [SESSIONS_KEY]: [...activeTabSessions] })
+        .catch(() => {})
+}
+
+const setSession = (tabId, session) => {
+    activeTabSessions.set(tabId, session)
+    return persistSessions()
+}
+
+const deleteSession = (tabId) => {
+    if (!activeTabSessions.delete(tabId)) return Promise.resolve()
+    return persistSessions()
+}
+
 // Map<tabId, frameId> — which frame owns the video
 const videoFrameMap = new Map()
 
@@ -473,7 +497,7 @@ const attachGlobalSocketListeners = () => {
 
 chrome.tabs.onRemoved.addListener((tabId) => {
     videoFrameMap.delete(tabId)
-    activeTabSessions.delete(tabId)
+    deleteSession(tabId)
     setBadge(tabId, '')
 })
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
@@ -726,7 +750,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                     const frameId = videoFrameMap.get(tabId) ?? sender.frameId
                     // Track the session so the owner also gets a badge and a
                     // restorable popup, same as join_room does.
-                    activeTabSessions.set(tabId, {
+                    await setSession(tabId, {
                         roomName: message.data.roomName,
                         isOwner: true,
                     })
@@ -740,7 +764,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                     const tabId = message.data?.tabId ?? sender.tab?.id
                     if (tabId != null) {
                         // Track the active session
-                        activeTabSessions.set(tabId, {
+                        await setSession(tabId, {
                             roomName: message.data.roomName,
                             isOwner: res.data?.isOwner,
                         })
@@ -775,7 +799,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                     const tabId = message.data?.tabId ?? sender.tab?.id
                     const roomName = message.data?.roomName
                     if (tabId != null) {
-                        activeTabSessions.delete(tabId)
+                        await deleteSession(tabId)
                         setBadge(tabId, '')
                         const frameId = videoFrameMap.get(tabId)
                         if (frameId != null) {
@@ -828,3 +852,72 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     })
     return true
 })
+
+/* --- Recovering from service worker termination ---
+Everything above lives in memory, so a terminated worker wakes up believing it
+is in no rooms while the user's tabs think they are still synced. Rebuild from
+storage.session and rejoin. */
+const restoreSessions = async () => {
+    const stored = await chrome.storage.session.get(SESSIONS_KEY)
+    const entries = stored?.[SESSIONS_KEY]
+    if (!Array.isArray(entries) || entries.length === 0) return
+
+    for (const [tabId, session] of entries) {
+        try {
+            // the tab may have been closed while we were asleep
+            await chrome.tabs.get(tabId)
+            activeTabSessions.set(tabId, session)
+        } catch (_) { /* gone */ }
+    }
+    await persistSessions()
+    if (activeTabSessions.size === 0) return
+
+    // videoFrameMap died with the worker too, and content scripts already
+    // running won't re-announce themselves unprompted.
+    for (const tabId of activeTabSessions.keys()) {
+        try {
+            await chrome.scripting.executeScript({
+                target: { tabId, allFrames: true },
+                func: () => {
+                    if (document.querySelector('video')) {
+                        chrome.runtime.sendMessage({ type: 'register_video_frame' })
+                    }
+                },
+            })
+        } catch (e) {
+            log('Could not rescan frames for tab', tabId, e.message)
+        }
+    }
+
+    if (!SOCKET || !SOCKET.connected) await connectToWebSocket()
+    await resumeSessions()
+}
+
+const ensureSessionsAlive = async () => {
+    try {
+        if (activeTabSessions.size === 0) {
+            // Either genuinely idle, or a fresh worker that lost everything.
+            await restoreSessions()
+            return
+        }
+        if (!SOCKET || !SOCKET.connected) {
+            await connectToWebSocket()
+            await resumeSessions()
+        }
+    } catch (e) {
+        log('ensureSessionsAlive failed', e)
+    }
+}
+
+// A timer is the only thing that will wake a terminated worker on its own —
+// no tab or popup message is coming while the user just watches.
+const SESSION_CHECK_ALARM = 'syncer-session-check'
+chrome.alarms.create(SESSION_CHECK_ALARM, { periodInMinutes: 1 })
+chrome.alarms.onAlarm.addListener((alarm) => {
+    if (alarm.name !== SESSION_CHECK_ALARM) return
+    ensureSessionsAlive()
+})
+
+// Not awaited: MV3 requires the listeners above to be registered synchronously
+// during evaluation, so recovery has to happen after that, not before.
+ensureSessionsAlive()
