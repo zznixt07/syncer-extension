@@ -4,6 +4,10 @@
   "type": "module",
   "description": "Tooling only — the extension itself has no build step and no dependencies.",
   "scripts": {
-    "test": "node --test"
+    "test": "node --test",
+    "test:e2e": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.62.1"
   }
 }
