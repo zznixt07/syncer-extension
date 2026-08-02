@@ -1,0 +1,9 @@
+{
+  "name": "syncer-extension",
+  "private": true,
+  "type": "module",
+  "description": "Tooling only — the extension itself has no build step and no dependencies.",
+  "scripts": {
+    "test": "node --test"
+  }
+}

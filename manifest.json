@@ -43,7 +43,8 @@
         {
             "resources": [
                 "lib/socket.io.min.js",
-                "main-content-script.js"
+                "main-content-script.js",
+                "sync-math.js"
             ],
             "matches": [
                 "<all_urls>"
