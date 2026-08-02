@@ -426,8 +426,18 @@ wc-toast-content {
 		setIsLoading(target, false)
 	})
 
-	// Live count pushed by the background whenever the server broadcasts one.
+	// Live updates pushed by the background.
 	chrome.runtime.onMessage.addListener((message) => {
+		if (message?.type === 'connection_state') {
+			if (!activeRoomName) return
+			if (message.data?.connected) {
+				// The count that follows the rejoin will overwrite this.
+				roomUserCountElem.textContent = 'Reconnected'
+			} else {
+				roomUserCountElem.textContent = 'Disconnected — reconnecting…'
+			}
+			return
+		}
 		if (message?.type !== 'room_user_count') return
 		const { roomName, userCount } = message.data || {}
 		// Ignore counts for a room another tab is in.

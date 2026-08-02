@@ -136,8 +136,13 @@ async function connectImmediate(address) {
 
     try {
         SOCKET = io(address, {
-            reconnectionAttempts: 0,
-            reconnection: false,
+            // A blip used to drop the room silently and permanently. Keep
+            // retrying; resumeSessions() rejoins whatever we were in.
+            reconnection: true,
+            reconnectionAttempts: Infinity,
+            reconnectionDelay: 1000,
+            reconnectionDelayMax: 8000,
+            timeout: CONNECT_TIMEOUT_MS,
             transports: ['websocket'],
         })
         // Attach before the connect promise resolves so no broadcast is missed.
@@ -204,6 +209,25 @@ const connectToWebSocket = async () => {
         return await connectImmediate(addr)
     }
     return { success: false, data: { message: 'no stored address' } }
+}
+
+// Auto-reconnect may already be in flight. Wait for it rather than tearing the
+// socket down and starting over, which would abandon the retry backoff.
+const RECONNECT_WAIT_MS = 3000
+const waitForConnection = () => {
+    return new Promise((resolve) => {
+        if (!SOCKET) return resolve(false)
+        if (SOCKET.connected) return resolve(true)
+        const onConnect = () => {
+            clearTimeout(timer)
+            resolve(true)
+        }
+        const timer = setTimeout(() => {
+            SOCKET?.off('connect', onConnect)
+            resolve(false)
+        }, RECONNECT_WAIT_MS)
+        SOCKET.once('connect', onConnect)
+    })
 }
 
 const socket_emit = async (eventName, data) => {
@@ -375,6 +399,57 @@ const clearAllUserCounts = () => {
     }
 }
 
+// Tell the popup and the toolbar that we've dropped, so a dead session doesn't
+// look like a live one.
+const notifyConnectionState = (connected) => {
+    chrome.runtime
+        .sendMessage({ type: 'connection_state', data: { connected } })
+        .catch(() => {})
+    for (const tabId of activeTabSessions.keys()) {
+        chrome.action.setTitle({
+            tabId,
+            title: connected ? 'Syncer' : 'Syncer: disconnected — reconnecting…',
+        }).catch(() => {})
+        if (!connected) setBadge(tabId, '…')
+    }
+}
+
+// After a reconnect the socket has a new id, so the server no longer has us in
+// any room. Rejoin everything we were in. Owners present their stored token and
+// reclaim, which is exactly what the token is for.
+let _resuming = false
+const resumeSessions = async () => {
+    if (_resuming || activeTabSessions.size === 0) return
+    _resuming = true
+    try {
+        for (const [tabId, session] of [...activeTabSessions]) {
+            const res = await joinRoom({ roomName: session.roomName })
+            if (!res?.success) {
+                log('Could not resume room', session.roomName, res?.data?.message)
+                continue
+            }
+            session.isOwner = !!res.data?.isOwner
+            listenToEvents(tabId, videoFrameMap.get(tabId))
+            applyUserCount(session.roomName, res.data?.userCount)
+            try {
+                await chrome.tabs.sendMessage(
+                    tabId,
+                    {
+                        type: 'setup_after_join',
+                        roomName: session.roomName,
+                        isOwner: session.isOwner,
+                    },
+                    videoFrameMap.get(tabId) != null
+                        ? { frameId: videoFrameMap.get(tabId) }
+                        : {}
+                )
+            } catch (_) { /* tab may be gone or not ready */ }
+        }
+    } finally {
+        _resuming = false
+    }
+}
+
 // Socket handlers that are not tab-scoped. Several code paths call the bare
 // SOCKET.removeAllListeners(), so this must be re-attached after each of them.
 const attachGlobalSocketListeners = () => {
@@ -382,6 +457,17 @@ const attachGlobalSocketListeners = () => {
     SOCKET.removeAllListeners('room_user_count')
     SOCKET.on('room_user_count', (result) => {
         applyUserCount(result?.roomName, result?.userCount)
+    })
+    SOCKET.removeAllListeners('connect')
+    SOCKET.on('connect', () => {
+        log('socket connected')
+        notifyConnectionState(true)
+        resumeSessions()
+    })
+    SOCKET.removeAllListeners('disconnect')
+    SOCKET.on('disconnect', (reason) => {
+        log('socket disconnected', reason)
+        notifyConnectionState(false)
     })
 }
 
@@ -604,8 +690,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         // --- Socket-dependent commands (direct from content script) ---
         } else {
             let resp
-            if (!SOCKET || !SOCKET.connected) {
+            if (!SOCKET) {
                 resp = await connectToWebSocket()
+            } else if (!SOCKET.connected) {
+                const reconnected = await waitForConnection()
+                if (!reconnected) {
+                    resp = {
+                        success: false,
+                        data: { message: 'websocket is reconnecting, try again' },
+                    }
+                }
             }
             if (message.type === 'websocket_connect') {
                 if (resp) {
