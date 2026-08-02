@@ -18,6 +18,9 @@ const sendLogToBG = async (message) => {
 }
 
 let VID_ELEM = null
+// Only the owner broadcasts media events; guests apply them. Tracked here so
+// the video rescan knows whether re-attaching listeners is correct.
+let IS_OWNER = false
 let _scanObserver = null
 let _scanTimer = null
 
@@ -77,16 +80,32 @@ const recheckVideoElement = () => {
         if (VID_ELEM) removeVideoEvents()
         VID_ELEM = next
 		// console.log('video element updated:', VID_ELEM)
-        listenToMediaEvents()
+        // Only the owner broadcasts. Re-attaching for a guest would turn it
+        // into a second source of truth and echo every applied event back.
+        if (IS_OWNER) listenToMediaEvents()
     }
     return { found: true }
 }
 
+// The observer fires constantly on heavy players, and re-querying the DOM on
+// every mutation is wasteful — coalesce into one check per interval.
+let _scanDebounceTimer = null
+const debouncedRecheck = () => {
+    if (_scanDebounceTimer) return
+    _scanDebounceTimer = setTimeout(() => {
+        _scanDebounceTimer = null
+        recheckVideoElement()
+    }, 400)
+}
+
+// SPAs (YouTube playlists, next episode) replace the <video> node outright.
+// Without this the listeners stay bound to a detached element and sync dies
+// silently until the room is rejoined.
 const startAutoVideoScan = () => {
     recheckVideoElement()
 
     if (!_scanObserver) {
-        _scanObserver = new MutationObserver(() => recheckVideoElement())
+        _scanObserver = new MutationObserver(debouncedRecheck)
         _scanObserver.observe(document.documentElement || document, {
             childList: true,
             subtree: true,
@@ -95,7 +114,8 @@ const startAutoVideoScan = () => {
         })
     }
 
-    // fallback polling for JS-heavy players
+    // fallback polling for JS-heavy players that swap sources without
+    // mutating anything we observe
     let tries = 0
     if (_scanTimer) clearInterval(_scanTimer)
     _scanTimer = setInterval(() => {
@@ -108,8 +128,20 @@ const startAutoVideoScan = () => {
     }, 1000)
 }
 
-// startAutoVideoScan()
-// recheckVideoElement()
+const stopAutoVideoScan = () => {
+    if (_scanObserver) {
+        _scanObserver.disconnect()
+        _scanObserver = null
+    }
+    if (_scanTimer) {
+        clearInterval(_scanTimer)
+        _scanTimer = null
+    }
+    if (_scanDebounceTimer) {
+        clearTimeout(_scanDebounceTimer)
+        _scanDebounceTimer = null
+    }
+}
 
 const connectToWebSocket = async () => {
 	return await sendMessageToBG({
@@ -599,7 +631,9 @@ const createRoom = async (roomName) => {
 			type: 'set_storage',
 			data: { key: CURR_ROOM_ID, value: roomName },
 		})
+		IS_OWNER = true
 		listenToMediaEvents()
+		startAutoVideoScan()
 	}
 	return result
 }
@@ -614,13 +648,17 @@ const joinRoom = async (roomName) => {
 			type: 'set_storage',
 			data: { key: CURR_ROOM_ID, value: roomName },
 		})
-		if (result.data.isOwner) {
+		IS_OWNER = !!result.data.isOwner
+		if (IS_OWNER) {
 			listenToMediaEvents()
 		} else {
 			// just listen to video buffering events and ask for fresh
 			// data after buffer
 			// joineeVideoListenEvents()
 		}
+		// Guests need the rescan too — their video node gets replaced just the
+		// same, and a stale one means incoming events act on nothing.
+		startAutoVideoScan()
 	}
 	return result
 }
@@ -641,6 +679,8 @@ const leaveRoom = async (roomName) => {
 		} else {
 			// joineeVideoUnListenEvents()
 		}
+		IS_OWNER = false
+		stopAutoVideoScan()
 	}
 	return result
 }
@@ -681,6 +721,8 @@ window.addEventListener('message', async (event) => {
         if (message.isOwner) {
             removeVideoEvents()
         }
+        IS_OWNER = false
+        stopAutoVideoScan()
         return port.postMessage({ success: true })
     }
 
@@ -693,9 +735,12 @@ window.addEventListener('message', async (event) => {
         })
 		VID_ELEM = findBestVideoElement()
 		await sendLogToBG('setupafterjoin, video element: ' + !!VID_ELEM)
-        if (message.isOwner) {
+        IS_OWNER = !!message.isOwner
+        if (IS_OWNER) {
             listenToMediaEvents()
         }
+        // Keeps VID_ELEM current across SPA navigations for owner and guest.
+        startAutoVideoScan()
         return port.postMessage({ success: true })
     }
 
