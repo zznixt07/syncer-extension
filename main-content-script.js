@@ -1,9 +1,4 @@
-import {
-	MAX_NUDGE_ATTEMPTS,
-	NUDGE_DURATION_MS,
-	decideCorrection,
-	targetTimeFor,
-} from '/sync-math.js'
+import { MediaController } from './media-controller.js'
 
 const sendMessageToBG = async (message) => {
     return new Promise((resolve) => {
@@ -84,12 +79,10 @@ const recheckVideoElement = () => {
 
     // avoid duplicate listeners if same node
     if (VID_ELEM !== next) {
-        if (VID_ELEM) {
-            cancelNudge(VID_ELEM)
-            removeVideoEvents()
-        }
-        _nudgeAttempts = 0
+        if (VID_ELEM) removeVideoEvents()
         VID_ELEM = next
+        // abandons any correction in flight on the old element
+        MEDIA.setVideo(next)
 		// console.log('video element updated:', VID_ELEM)
         // Only the owner broadcasts. Re-attaching for a guest would turn it
         // into a second source of truth and echo every applied event back.
@@ -388,139 +381,34 @@ const requestEventFromOwner = (roomName) => {
 Correcting position by assigning currentTime forces a seek, and a seek costs a
 re-buffer and a visible stutter on most players. Below the threshold it is
 cheaper to run slightly fast or slow for a moment and let the drift close on
-its own. The arithmetic lives in sync-math.js so it can be unit tested; this
-half owns the side effects.
+its own. sync-math.js decides, media-controller.js applies; this file just
+wires them to the page.
 */
-let _nudgeTimer = null
-let _nudgeAttempts = 0
-let _nudgeBaseRate = 1
-
-const cancelNudge = (video) => {
-	if (!_nudgeTimer) return
-	clearTimeout(_nudgeTimer)
-	_nudgeTimer = null
-	if (video) video.playbackRate = _nudgeBaseRate
-}
-
-const isLiveStream = (video) => !isFinite(video.duration) || video.duration === 0
-
-// Returns true if it took responsibility for the drift, false to fall back to a seek.
-const applyNudge = (video, decision) => {
-	cancelNudge(null)
-	_nudgeBaseRate = decision.base
-	video.preservesPitch = true
-	video.playbackRate = decision.rate
-
-	// Some players refuse or immediately revert the change. Read it back rather
-	// than assuming it stuck.
-	if (Math.abs(video.playbackRate - decision.rate) > 0.001) {
-		video.playbackRate = decision.base
-		_nudgeAttempts = MAX_NUDGE_ATTEMPTS // don't keep trying on this player
-		return false
-	}
-
-	_nudgeAttempts++
-	_nudgeTimer = setTimeout(() => {
-		_nudgeTimer = null
-		video.playbackRate = _nudgeBaseRate
-	}, NUDGE_DURATION_MS)
-	return true
-}
-
-// Programmatic play() is rejected when the page has had no user gesture yet.
-// The rejection used to go unhandled, leaving the guest silently paused.
-let _pendingGestureRetry = false
-const playSafely = async (video) => {
-	try {
-		await video.play()
-		_pendingGestureRetry = false
-		await sendMessageToBG({ type: 'playback_blocked', data: { blocked: false } })
-	} catch (e) {
-		log('play() was blocked', e)
-		await sendLogToBG(`play() blocked: ${e?.message}`)
-		await sendMessageToBG({ type: 'playback_blocked', data: { blocked: true } })
-		if (_pendingGestureRetry) return
-		_pendingGestureRetry = true
-		// Retry on the next real interaction anywhere on the page, which is
-		// exactly the gesture the autoplay policy was waiting for.
-		const retry = () => {
-			document.removeEventListener('pointerdown', retry, true)
-			document.removeEventListener('keydown', retry, true)
-			_pendingGestureRetry = false
-			if (VID_ELEM && VID_ELEM.paused) playSafely(VID_ELEM)
+const MEDIA = new MediaController({
+	now: () => correctedNow(),
+	onPlaybackBlocked: (blocked) => {
+		sendMessageToBG({ type: 'playback_blocked', data: { blocked } })
+	},
+	// The autoplay policy wants a real interaction; the next one anywhere on
+	// the page will do.
+	onGestureNeeded: (retry) => {
+		const onGesture = () => {
+			document.removeEventListener('pointerdown', onGesture, true)
+			document.removeEventListener('keydown', onGesture, true)
+			retry()
 		}
-		document.addEventListener('pointerdown', retry, true)
-		document.addEventListener('keydown', retry, true)
-	}
-}
+		document.addEventListener('pointerdown', onGesture, true)
+		document.addEventListener('keydown', onGesture, true)
+	},
+	log,
+})
 
 const onMediaEvent = async (result) => {
 	log('called onMediaEvent', result)
-	const { roomName, data } = result
+	const { data } = result
 	await sendLogToBG(`called onMediaEvent' ${result}`)
-	// if (!WAS_REDIRECTED) {
-	// if this did not came from a redirection, only then think about redirection.
-	// 	if (window.location.href !== data.url) {
-	// 		log('setting prev room in LS and redirecting')
-	// 		await setPrevRoomInLS(roomName)
-	// 		window.location.href = data.url
-	// 	}
-	// }
-	if (VID_ELEM) {
-		log('VID ELEM settig state')
-		if (!isNaN(parseFloat(data.timestamp))) {
-			const targetTime = targetTimeFor(data, correctedNow())
-			const decision = decideCorrection({
-				currentTime: VID_ELEM.currentTime,
-				targetTime,
-				roomRate: data.playbackRate,
-				isLive: isLiveStream(VID_ELEM),
-				isPaused: VID_ELEM.paused,
-				nudgeAttempts: _nudgeAttempts,
-			})
-
-			if (decision.action === 'nudge') {
-				// Too small to be worth a stutter — close it by running slightly
-				// off-speed, and only seek if the player won't cooperate.
-				if (!applyNudge(VID_ELEM, decision)) {
-					VID_ELEM.currentTime = targetTime
-				}
-			} else if (decision.action === 'seek') {
-				cancelNudge(VID_ELEM)
-				// A real seek starts fresh; a fallback seek must not, or a
-				// player that refuses rate changes gets retried forever.
-				if (decision.reason === 'drift') _nudgeAttempts = 0
-				VID_ELEM.currentTime = targetTime
-			} else {
-				// In sync. Reset so a later drift gets a fresh set of attempts.
-				cancelNudge(VID_ELEM)
-				_nudgeAttempts = 0
-			}
-		}
-		if (data.mediaState === 'buffer' && !VID_ELEM.paused) {
-			cancelNudge(VID_ELEM)
-			VID_ELEM.pause()
-		} else if (data.mediaState === 'play' && VID_ELEM.paused) {
-			await playSafely(VID_ELEM)
-		} else if (data.mediaState === 'pause' && !VID_ELEM.paused) {
-			cancelNudge(VID_ELEM)
-			VID_ELEM.pause()
-		}
-		// if (parseFloat(data.volume) !== NaN) {
-		// 	VID_ELEM.volume = data.volume
-		// }
-		if (!isNaN(parseFloat(data.playbackRate))) {
-			if (_nudgeTimer) {
-				// Applying it now would wipe the correction on the very next
-				// event and it would never converge. Just keep the restore
-				// target current in case the host changes speed mid-nudge.
-				_nudgeBaseRate = data.playbackRate
-			} else {
-				VID_ELEM.playbackRate = data.playbackRate
-			}
-		}
-		VID_ELEM.muted = data.isMuted
-	} else {
+	MEDIA.setVideo(VID_ELEM)
+	if (!(await MEDIA.applyRemoteState(data))) {
 		log('no video element found to act on media event')
 		await sendLogToBG('no video element found to act on media event')
 	}
