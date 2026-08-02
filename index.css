@@ -34,6 +34,14 @@ input {
     flex-direction: column;
 }
 
+.room-user-count {
+    margin: 2px 0 0;
+    font-size: 12px;
+    opacity: 0.75;
+    /* reserve the line so the layout doesn't jump when the text is cleared */
+    min-height: 14px;
+}
+
 .flex {
     display: flex;
     justify-content: center;

@@ -16,6 +16,16 @@ const getCurrentTabId = async () => {
 const tab = await getCurrentTab()
 const url = tab?.url || ''
 if (true) {
+	const REQUEST_TIMEOUT_MS = 7000
+	const withTimeout = (promise, label) => {
+		return Promise.race([
+			promise,
+			new Promise((_, reject) => {
+				setTimeout(() => reject(new Error(`${label} timed out`)), REQUEST_TIMEOUT_MS)
+			}),
+		])
+	}
+
 	const success = (message) => {
 		toast(`<span>${message}</span>`, {
 			...{ icon: { type: 'success' } },
@@ -35,7 +45,10 @@ if (true) {
 	// Send message directly to background (not via content scripts)
 	const sendMessageToBG = async (type, data) => {
 		try {
-			return await chrome.runtime.sendMessage({ type, data })
+			return await withTimeout(
+				chrome.runtime.sendMessage({ type, data }),
+				type
+			)
 		} catch (e) {
 			fail(`Failed: ${e.message}`)
 			return null
@@ -62,11 +75,14 @@ if (true) {
 	const sendMessageToVideoFrame = async (type, roomName) => {
 		const currTabId = await getCurrentTabId()
 		try {
-			const result = await chrome.runtime.sendMessage({
-				type: 'forward_to_video_frame',
-				tabId: currTabId,
-				innerMessage: { type, roomName },
-			})
+			const result = await withTimeout(
+				chrome.runtime.sendMessage({
+					type: 'forward_to_video_frame',
+					tabId: currTabId,
+					innerMessage: { type, roomName },
+				}),
+				type
+			)
 			return result
 		} catch (e) {
 			fail(`Failed on: ${type}: ${e.message}`)
@@ -124,20 +140,78 @@ wc-toast-content {
 	const leaveRoomBtn = document.getElementById('leave-room')
 	const listRoomsBtn = document.getElementById('list-rooms')
 	const serverAddressInput = document.getElementById('server-address')
+	const roomUserCountElem = document.getElementById('room-user-count')
 	const recheckBtn = document.getElementById('recheck-video')
+
+	// The server counts everyone in the room, including us. What actually matters
+	// is how many *other* people are watching, so subtract ourselves when we're in.
+	const othersIn = (roomName, userCount) => {
+		return Math.max(0, userCount - (roomName === activeRoomName ? 1 : 0))
+	}
+
+	const formatUserCount = (others) => {
+		if (others === 0) return 'no one else'
+		return `${others} ${others === 1 ? 'other' : 'others'}`
+	}
+
+	const updateRoomUserCount = (roomName, userCount) => {
+		if (!roomUserCountElem || typeof userCount !== 'number') return
+		// The host is the one whose play/pause/seek is broadcast; everyone else
+		// only receives. Worth saying out loud.
+		const role = roomName === activeRoomName && activeIsOwner != null
+			? (activeIsOwner ? " · you're the host" : " · you're a guest")
+			: ''
+		// No room name here — the input right above already shows it.
+		const others = othersIn(roomName, userCount)
+		const summary = others === 0
+			? 'No one else here yet'
+			: `${others} ${others === 1 ? 'other' : 'others'} present`
+		roomUserCountElem.textContent = `${summary}${role}`
+	}
+
+	const clearRoomUserCount = () => {
+		if (roomUserCountElem) roomUserCountElem.textContent = ''
+	}
+
+	const currentRoomName = () => document.getElementById('new-room-name').value
+
+	// The room this tab is actually in, as opposed to whatever is typed in the
+	// input. Kept in sync with create/join/leave and restored on popup open.
+	let activeRoomName = null
+	// Whether we hold ownership of that room (null when not in a room).
+	let activeIsOwner = null
+
+	const PROTECTED_PAGE_MESSAGE = 'Open a normal webpage first. Chrome does not allow extensions to access this page.'
+	const isProtectedPageUrl = (url) => /^(chrome|edge|brave|opera|vivaldi|about|chrome-extension|moz-extension):/.test(url || '')
+	const ensureCurrentTabIsAccessible = async () => {
+		const tab = await getCurrentTab()
+		if (isProtectedPageUrl(tab?.url)) {
+			fail(PROTECTED_PAGE_MESSAGE)
+			return null
+		}
+		return tab
+	}
 
 	// Scans all frames for a video element and registers the frame that has one
 	const recheckVideoFrames = async () => {
-		const currTabId = await getCurrentTabId()
-		await chrome.scripting.executeScript({
-			target: { tabId: currTabId, allFrames: true },
-			func: () => {
-				const video = document.querySelector('video')
-				if (video) {
-					chrome.runtime.sendMessage({ type: 'register_video_frame' })
-				}
-			},
-		})
+		const tab = await getCurrentTab()
+		if (isProtectedPageUrl(tab?.url)) {
+			return false
+		}
+		const currTabId = tab.id
+		try {
+			await chrome.scripting.executeScript({
+				target: { tabId: currTabId, allFrames: true },
+				func: () => {
+					const video = document.querySelector('video')
+					if (video) {
+						chrome.runtime.sendMessage({ type: 'register_video_frame' })
+					}
+				},
+			})
+		} catch (err) {
+			return false
+		}
 		const result = await chrome.runtime.sendMessage({
 			type: 'has_video_frame',
 			tabId: currTabId,
@@ -148,100 +222,173 @@ wc-toast-content {
 	listRoomsBtn.addEventListener('click', async (e) => {
 		const target = e.currentTarget
 		setIsLoading(target, true)
-		const currRoomName = document.getElementById('new-room-name').value
-		const result = await sendMessageToBG('list_rooms')
-		if (result?.success) {
-			const dataList = document.getElementById('rooms')
-			const roomList = document.querySelector('pre#rooms-list')
-			dataList.innerHTML = ''
-			roomList.textContent = ''
-			const rooms = result.data.rooms
-			if (rooms.length === 0) {
-				roomList.textContent += 'No rooms found'
-			}
-			rooms.forEach((room) => {
-				const option = document.createElement('option')
-				option.value = room
-				option.textContent = room
-				dataList.appendChild(option)
-				// roomList.textContent += room + '\n'
+		try {
+			const result = await sendMessageToBG('list_rooms')
+			if (result?.success) {
+				const dataList = document.getElementById('rooms')
+				const roomList = document.querySelector('pre#rooms-list')
+				dataList.innerHTML = ''
+				roomList.textContent = ''
+				const rooms = result.data.roomUserCounts || result.data.rooms.map((roomName) => ({
+					roomName,
+					userCount: null,
+				}))
+				if (rooms.length === 0) {
+					roomList.textContent += 'No rooms found'
+				}
+				rooms.forEach((room) => {
+					const roomName = room.roomName
+					const option = document.createElement('option')
+					option.value = roomName
+					option.textContent = roomName
+					dataList.appendChild(option)
+					// roomList.textContent += room + '\n'
 
-				const wrapper = document.createElement('div')
-				wrapper.style.display = 'flex'
-				wrapper.style.alignItems = 'center'
-				wrapper.style.marginBottom = '4px'
+					const wrapper = document.createElement('div')
+					wrapper.style.display = 'flex'
+					wrapper.style.alignItems = 'center'
+					wrapper.style.marginBottom = '4px'
 
-				const roomNameSpan = document.createElement('span')
-				roomNameSpan.textContent = room
-				roomNameSpan.style.flexGrow = '1'
+					const roomNameSpan = document.createElement('span')
+					roomNameSpan.style.flexGrow = '1'
 
-				const joinBtn = document.createElement('button')
-				joinBtn.textContent = 'Join'
-				joinBtn.className = 'btn'
-				joinBtn.style.marginLeft = '8px'
-				joinBtn.addEventListener('click', () => {
-					document.getElementById('new-room-name').value = room
-					joinRoomBtn.click() // Programmatically trigger the main join logic
+					// The room we're already in gets Leave instead of Join.
+					const actionBtn = document.createElement('button')
+					actionBtn.className = 'btn'
+					actionBtn.style.marginLeft = '8px'
+
+					// Repaints just this row — no refetch of the whole list.
+					const paintRow = (userCount) => {
+						const isActiveRoom = roomName === activeRoomName
+						let label = typeof userCount === 'number'
+							? `${roomName} (${formatUserCount(othersIn(roomName, userCount))})`
+							: roomName
+						if (isActiveRoom && activeIsOwner) {
+							label += ' · host'
+							roomNameSpan.title = "You're hosting this room."
+						} else if (isActiveRoom) {
+							label += ' · guest'
+							roomNameSpan.title = "You're following this room's host."
+						} else if (room.isOwner) {
+							// server-verified: we own it from another tab
+							label += ' · yours'
+							roomNameSpan.title = 'You own this room, from another tab.'
+						}
+						roomNameSpan.textContent = label
+						roomNameSpan.style.fontWeight = isActiveRoom ? 'bold' : 'normal'
+						actionBtn.textContent = isActiveRoom ? 'Leave' : 'Join'
+					}
+					paintRow(room.userCount)
+
+					actionBtn.addEventListener('click', async () => {
+						document.getElementById('new-room-name').value = roomName
+						const leaving = roomName === activeRoomName
+						setIsLoading(actionBtn, true)
+						let result
+						try {
+							result = leaving
+								? await doLeaveRoom(roomName)
+								: await doJoinRoom(roomName)
+						} finally {
+							setIsLoading(actionBtn, false)
+						}
+						// The ack's count already accounts for us joining/leaving.
+						if (result?.success) paintRow(result.data?.userCount)
+					})
+					wrapper.appendChild(roomNameSpan)
+					wrapper.appendChild(actionBtn)
+					roomList.appendChild(wrapper)
 				})
-				wrapper.appendChild(roomNameSpan)
-				wrapper.appendChild(joinBtn)
-				roomList.appendChild(wrapper)
-			})
-		} else {
-			fail(result?.data?.message)
+			} else {
+				fail(result?.data?.message)
+			}
+		} finally {
+			setIsLoading(target, false)
 		}
-		setIsLoading(target, false)
 	})
 	createRoomBtn.addEventListener('click', async (e) => {
 		const target = e.currentTarget
 		target.disabled = true
-		const currRoomName = document.getElementById('new-room-name').value
+		try {
+			const currRoomName = document.getElementById('new-room-name').value
+			const tab = await ensureCurrentTabIsAccessible()
+			if (!tab) return
 
-		// Auto-recheck for video before creating room
-		const found = await recheckVideoFrames()
-		if (!found) {
-			fail('No video found in any frame.')
+			// Auto-recheck for video before creating room
+			const found = await recheckVideoFrames()
+			if (!found) {
+				fail('No video found in any accessible frame.')
+				return
+			}
+
+			const result = await sendMessageToVideoFrame('create_room', currRoomName)
+			if (result?.success) {
+				success(result.data.message)
+				activeRoomName = currRoomName
+				activeIsOwner = true // creating a room always makes us its owner
+				updateRoomUserCount(currRoomName, result.data.userCount)
+			} else {
+				fail(result?.data?.message)
+			}
+		} finally {
 			target.disabled = false
-			return
 		}
+	})
+	// Shared by the main buttons and the per-room buttons in the rooms list.
+	// Returns the raw result so callers can read the acked user count.
+	const doJoinRoom = async (roomName) => {
+		const tab = await ensureCurrentTabIsAccessible()
+		if (!tab) return null
 
-		const result = await sendMessageToVideoFrame('create_room', currRoomName)
+		// Pre-register the video frame when the current tab allows extension access.
+		await recheckVideoFrames()
+
+		const result = await sendMessageToBG('join_room', { roomName, tabId: tab.id })
 		if (result?.success) {
 			success(result.data.message)
+			activeRoomName = roomName
+			// true when we presented a stored token and reclaimed the room
+			activeIsOwner = !!result.data.isOwner
+			updateRoomUserCount(roomName, result.data.userCount)
 		} else {
 			fail(result?.data?.message)
 		}
-		target.disabled = false
-	})
+		return result
+	}
+
+	const doLeaveRoom = async (roomName) => {
+		const currTabId = await getCurrentTabId()
+		const result = await sendMessageToBG('leave_room', { roomName, tabId: currTabId })
+		if (result?.success) {
+			success(result.data.message)
+			activeRoomName = null
+			activeIsOwner = null
+			// The leave ack's count excludes us, so it says nothing about
+			// the room we just left — show nothing rather than a wrong number.
+			clearRoomUserCount()
+		} else {
+			fail(result?.data?.message)
+		}
+		return result
+	}
+
 	joinRoomBtn.addEventListener('click', async (e) => {
 		const target = e.currentTarget
 		setIsLoading(target, true)
-		const currRoomName = document.getElementById('new-room-name').value
-		const currTabId = await getCurrentTabId()
-
-		// Pre-register the video frame (if any) so background can target it
-		await recheckVideoFrames()
-
-		const result = await sendMessageToBG('join_room', { roomName: currRoomName, tabId: currTabId })
-		if (result?.success) {
-			success(result.data.message)
-		} else {
-			fail(result?.data?.message)
+		try {
+			await doJoinRoom(document.getElementById('new-room-name').value)
+		} finally {
+			setIsLoading(target, false)
 		}
-		setIsLoading(target, false)
 	})
 	leaveRoomBtn.addEventListener('click', async (e) => {
 		const target = e.currentTarget
 		setIsLoading(target, true)
-		const currRoomName = document.getElementById('new-room-name').value
-		const currTabId = await getCurrentTabId()
-		const result = await sendMessageToBG('leave_room', { roomName: currRoomName, tabId: currTabId })
-		if (result?.success) {
-			success(result.data.message)
-		} else {
-			fail(result?.data?.message)
+		try {
+			await doLeaveRoom(document.getElementById('new-room-name').value)
+		} finally {
+			setIsLoading(target, false)
 		}
-		setIsLoading(target, false)
 	})
 
 	serverAddressInput.addEventListener('input', async (e) => {
@@ -279,10 +426,23 @@ wc-toast-content {
 		setIsLoading(target, false)
 	})
 
-	// chrome.runtime.onMessage.addListener(async (message, sender, reply) => {
-	//     // if (!sender.tab) return
-	//     const offsetMs = message.offsetMs
-	//     if (offsetMs) chrome.storage.sync.set({ offsetMs: offsetMs })
-	//     reply()
-	// })
+	// Live count pushed by the background whenever the server broadcasts one.
+	chrome.runtime.onMessage.addListener((message) => {
+		if (message?.type !== 'room_user_count') return
+		const { roomName, userCount } = message.data || {}
+		// Ignore counts for a room another tab is in.
+		if (roomName !== (activeRoomName ?? currentRoomName())) return
+		updateRoomUserCount(roomName, userCount)
+	})
+
+	// Restore the active room (if any) so a reopened popup isn't blank/stale.
+	const roomStatus = await sendMessageToBG('get_room_status', {
+		tabId: await getCurrentTabId(),
+	})
+	if (roomStatus?.roomName) {
+		activeRoomName = roomStatus.roomName
+		activeIsOwner = !!roomStatus.isOwner
+		document.getElementById('new-room-name').value = roomStatus.roomName
+		updateRoomUserCount(roomStatus.roomName, roomStatus.userCount)
+	}
 }
