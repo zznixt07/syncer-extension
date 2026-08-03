@@ -45,12 +45,27 @@ test('a small drift is corrected by the playback rate', async ({ newClient }) =>
 	await hostPlay(host)
 	await expect.poll(async () => (await videoState(guest.page)).paused).toBe(false)
 
-	// Record from inside the page. The nudge window can be cut short by the
-	// next event, and polling over CDP is far too coarse to catch it.
+	/*
+	Record the writes, not the events. The nudge window can be cut short by the
+	next event to arrive, and `ratechange` is dispatched asynchronously — when
+	the nudge is undone quickly, every handler runs after the restore and reads
+	the restored value, making a correction that did happen look like it never
+	did. Trapping the setter sees exactly what the extension asked for.
+	*/
 	await guest.page.evaluate(() => {
 		window.__rates = []
 		const v = document.querySelector('video')
-		v.addEventListener('ratechange', () => window.__rates.push(v.playbackRate))
+		const desc = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'playbackRate')
+		Object.defineProperty(v, 'playbackRate', {
+			configurable: true,
+			get() {
+				return desc.get.call(this)
+			},
+			set(value) {
+				window.__rates.push(value)
+				desc.set.call(this, value)
+			},
+		})
 	})
 
 	// Shove the guest 0.2s ahead: past the ignore threshold, well under the
