@@ -719,6 +719,22 @@ window.addEventListener('message', async (event) => {
         return port.postMessage({ success: true })
     }
 
+    /*
+    The background noticed this tab move to a new episode and has waited for a
+    video to appear. Broadcasting is driven from there rather than from a play
+    listener here, because a full page load leaves this script with no memory
+    of the URL it replaced.
+    */
+    if (message.type === 'emit_stream_change') {
+        if (IS_OWNER) {
+            await sendStreamChangeEvent()
+            // Stops sendPlayEvent firing a second, redundant stream_change when
+            // the new episode starts.
+            currUrl = getTopURLSync()
+        }
+        return port.postMessage({ success: true })
+    }
+
     if (message.type === 'media_event') {
         if (isSpotifyService(message.data.data)) {
             log('spotify media event')

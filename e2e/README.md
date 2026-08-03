@@ -47,3 +47,8 @@ messaging, the sockets — is real.
   tests pass by doing nothing.
 - Anything about how a specific site's player (YouTube, hls.js) behaves. The
   fixture is a plain `<video>`.
+- Episode changes that only swap an `<iframe>`'s `src`, leaving the page URL
+  alone. Not a harness limit — the extension does not support it. Only the
+  top-frame URL is ever compared, so there is nothing to broadcast. Sites that
+  change the page URL on "next episode" (full load or pushState) are covered by
+  `navigation.spec.js`.

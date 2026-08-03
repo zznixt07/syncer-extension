@@ -375,12 +375,38 @@ const setSession = (tabId, session) => {
 }
 
 const deleteSession = (tabId) => {
+    forgetNavigation(tabId)
     if (!activeTabSessions.delete(tabId)) return Promise.resolve()
     return persistSessions()
 }
 
 // Map<tabId, frameId> — which frame owns the video
 const videoFrameMap = new Map()
+
+/*
+--- Following the host to the next episode ---
+
+The content script cannot notice a full page load: it *is* the new page, with
+no memory of the URL it replaced. So the owner's navigation is detected here,
+where we outlive it. chrome.tabs.onUpdated covers both kinds of move — a real
+load (status) and an SPA pushState (changeInfo.url) — so one detector does.
+*/
+
+// Map<tabId, string> — the last top URL we broadcast, so a redirect chain or a
+// repeated onUpdated for the same URL doesn't emit twice.
+const lastBroadcastUrl = new Map()
+// Map<tabId, timeoutId> — settle debounce in flight
+const pendingNav = new Map()
+const NAV_SETTLE_MS = 800
+// Heavy players mount their <video> well after the page reports 'complete'.
+const NAV_VIDEO_RETRIES = 12
+const NAV_VIDEO_RETRY_MS = 1000
+
+const forgetNavigation = (tabId) => {
+    clearTimeout(pendingNav.get(tabId))
+    pendingNav.delete(tabId)
+    lastBroadcastUrl.delete(tabId)
+}
 
 // --- Room user count ---
 // Map<roomName, userCount> — latest count broadcast by the server
@@ -507,27 +533,102 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
         // (the rejoined page needs it to re-route listeners)
     }
 
-    // After redirect completes, auto-scan for video if there's an active session
-    if (changeInfo.status === 'complete' && activeTabSessions.has(tabId)) {
-        // Small delay to let iframes/video elements load
-        setTimeout(async () => {
-            if (!activeTabSessions.has(tabId)) return
-            try {
-                await chrome.scripting.executeScript({
-                    target: { tabId, allFrames: true },
-                    func: () => {
-                        const video = document.querySelector('video')
-                        if (video) {
-                            chrome.runtime.sendMessage({ type: 'register_video_frame' })
-                        }
-                    },
-                })
-            } catch (e) {
-                log('Auto video scan after redirect failed:', e.message)
-            }
-        }, 5000)
+    if (!activeTabSessions.has(tabId)) return
+
+    // A load replaced every frame, so the video frame has to announce itself
+    // again before anything can be routed to it.
+    if (changeInfo.status === 'complete') waitForVideoFrame(tabId)
+
+    // changeInfo.url covers SPA history navigation, which never reports a
+    // status at all; 'complete' covers a real load.
+    if (changeInfo.url || changeInfo.status === 'complete') {
+        scheduleStreamChange(tabId)
     }
 })
+
+/*
+Ask every frame in the tab whether it has a video; the ones that do answer with
+register_video_frame, which is what populates videoFrameMap.
+*/
+const probeForVideoFrame = async (tabId) => {
+    try {
+        await chrome.scripting.executeScript({
+            target: { tabId, allFrames: true },
+            func: () => {
+                if (document.querySelector('video')) {
+                    chrome.runtime.sendMessage({ type: 'register_video_frame' })
+                }
+            },
+        })
+    } catch (e) {
+        log('Video frame probe failed:', e.message)
+    }
+}
+
+// Map<tabId, Promise<boolean>> — so the rescan and the pending broadcast for
+// the same tab share one probe loop instead of racing two.
+const videoFrameWaits = new Map()
+
+const waitForVideoFrame = (tabId) => {
+    if (videoFrameMap.has(tabId)) return Promise.resolve(true)
+    const existing = videoFrameWaits.get(tabId)
+    if (existing) return existing
+
+    const wait = (async () => {
+        for (let attempt = 0; attempt < NAV_VIDEO_RETRIES; attempt++) {
+            if (!activeTabSessions.has(tabId)) return false
+            await probeForVideoFrame(tabId)
+            // register_video_frame arrives as a separate message, so give it a
+            // moment to land before deciding this attempt failed.
+            await new Promise((r) => setTimeout(r, NAV_VIDEO_RETRY_MS))
+            if (videoFrameMap.has(tabId)) return true
+        }
+        return false
+    })().finally(() => videoFrameWaits.delete(tabId))
+
+    videoFrameWaits.set(tabId, wait)
+    return wait
+}
+
+/*
+Only the owner broadcasts, and only once the tab has come to rest: clicking
+"next episode" can bounce through two or three redirects, and each one shows up
+here.
+*/
+const scheduleStreamChange = (tabId) => {
+    if (!activeTabSessions.get(tabId)?.isOwner) return
+    clearTimeout(pendingNav.get(tabId))
+    pendingNav.set(
+        tabId,
+        setTimeout(() => emitStreamChangeForTab(tabId), NAV_SETTLE_MS)
+    )
+}
+
+const emitStreamChangeForTab = async (tabId) => {
+    pendingNav.delete(tabId)
+    if (!activeTabSessions.get(tabId)?.isOwner) return
+
+    // Read the URL now rather than when this was scheduled — the point of the
+    // debounce is that the URL at schedule time may already be stale.
+    const url = await getTopFrameUrl(tabId)
+    if (!url || lastBroadcastUrl.get(tabId) === url) return
+
+    // Don't drag the room onto a menu or a search page.
+    if (!(await waitForVideoFrame(tabId))) {
+        log('No video appeared, not broadcasting:', url)
+        return
+    }
+    // The tab may have moved on again while we waited.
+    if ((await getTopFrameUrl(tabId)) !== url) return
+    if (!activeTabSessions.get(tabId)?.isOwner) return
+
+    lastBroadcastUrl.set(tabId, url)
+    // register_video_frame has already sent setup_after_join, so IS_OWNER is
+    // back in place on the new page and this will actually broadcast.
+    await chrome.tabs
+        .sendMessage(tabId, { type: 'emit_stream_change' }, { frameId: videoFrameMap.get(tabId) })
+        .catch(() => {})
+}
 
 // Commands that MUST go through the video frame
 const VIDEO_FRAME_COMMANDS = new Set([
@@ -616,6 +717,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         } else if (message.type === 'navigate_tab') {
             const tabId = sender.tab?.id
             if (tabId != null && message.data?.url) {
+                // We were sent here; don't turn round and broadcast it back if
+                // this tab later becomes the owner.
+                lastBroadcastUrl.set(tabId, message.data.url)
                 await chrome.tabs.update(tabId, { url: message.data.url })
             }
             sendResponse({ success: true })
@@ -875,18 +979,7 @@ const restoreSessions = async () => {
     // videoFrameMap died with the worker too, and content scripts already
     // running won't re-announce themselves unprompted.
     for (const tabId of activeTabSessions.keys()) {
-        try {
-            await chrome.scripting.executeScript({
-                target: { tabId, allFrames: true },
-                func: () => {
-                    if (document.querySelector('video')) {
-                        chrome.runtime.sendMessage({ type: 'register_video_frame' })
-                    }
-                },
-            })
-        } catch (e) {
-            log('Could not rescan frames for tab', tabId, e.message)
-        }
+        await probeForVideoFrame(tabId)
     }
 
     if (!SOCKET || !SOCKET.connected) await connectToWebSocket()
