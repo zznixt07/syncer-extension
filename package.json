@@ -5,7 +5,9 @@
   "description": "Tooling only — the extension itself has no build step and no dependencies.",
   "scripts": {
     "test": "node --test",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "package": "node scripts/package.mjs",
+    "release": "node scripts/publish.mjs"
   },
   "devDependencies": {
     "@playwright/test": "^1.62.1"

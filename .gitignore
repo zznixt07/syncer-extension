@@ -1,5 +1,7 @@
 node_modules/
 syncer.zip
+dist/
+.env
 test-results/
 playwright-report/
 .playwright/

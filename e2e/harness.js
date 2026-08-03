@@ -12,7 +12,14 @@ import path from 'node:path'
 export { expect }
 
 const E2E_DIR = path.dirname(fileURLToPath(import.meta.url))
-const EXT_DIR = path.dirname(E2E_DIR)
+/*
+Normally the repo itself. Point SYNCER_EXT_DIR at an unpacked release zip to run
+the whole suite against exactly what gets uploaded — the one way to catch a file
+the packaging script forgot to include.
+*/
+const EXT_DIR = process.env.SYNCER_EXT_DIR
+	? path.resolve(process.env.SYNCER_EXT_DIR)
+	: path.dirname(E2E_DIR)
 const FIXTURE_DIR = path.join(E2E_DIR, 'fixture')
 
 /*
