@@ -22,8 +22,9 @@ const DIST = path.join(ROOT, 'dist')
 const FILES = [
 	'manifest.json',
 	'icon.png',
-	// background service worker + its one dependency
+	// background service worker + its dependencies
 	'background.js',
+	'host-media.js',
 	'lib/socket.io.min.js',
 	// content scripts (content-script.js injects main-content-script.js)
 	'content-script.js',

@@ -1,5 +1,5 @@
 import { MediaController } from './media-controller.js'
-import { normalizePlaybackPayload, PlaybackSequenceGate, withLegacyPlaybackFields } from './protocol.js'
+import { normalizePlaybackPayload, PlaybackSequenceGate } from './protocol.js'
 
 const sendMessageToBG = async (message) => {
     return new Promise((resolve) => {
@@ -158,9 +158,9 @@ const connectToWebSocket = async () => {
 
 const isYoutubeClient = () =>
 	window.location.host.startsWith('www.youtube.com')
-const isYoutubeService = (data) => data.service === 'youtube'
+const isYoutubeService = (data) => data?.source?.service === 'youtube' || data?.source?.adapter === 'youtube'
 const isSpotifyClient = () => window.location.host.startsWith('open.spotify')
-const isSpotifyService = (data) => data.service === 'spotify'
+const isSpotifyService = (data) => data?.source?.service === 'spotify' || data?.source?.adapter === 'spotify'
 
 const acceptOrderedPayload = (data = {}) => PLAYBACK_SEQUENCE.accept(data)
 
@@ -295,35 +295,35 @@ const handleSpotifyStreamEvent = (recv, streamChanged) => {
 	if (streamChanged) {
 		const playerState = playerAPI.getState()
 		const isRecvSongAlreadyPlaying =
-			playerState.context.uri === recv.playlistID &&
-			playerState.item.uri === recv.songURI
+			playerState.context.uri === recv.media.contextId &&
+			playerState.item.uri === recv.media.canonicalId
 		if (!isRecvSongAlreadyPlaying) {
-			log('playing new song', recv.songURI, recv.playlistID)
+			log('playing new song', recv.media.canonicalId, recv.media.contextId)
 			// calling this method automatically seeks the song to 00:00
 			// and the play() method is handled async-ishly while the seekTo() is handled sync-ishly
 			// this causes the invokation of seekTo() method, even after play(), to be useless.
 
 			playerAPI.play(
-				{ uri: recv.playlistID },
+				{ uri: recv.media.contextId },
 				{},
-				{ skipTo: { uri: recv.songURI } }
+				{ skipTo: { uri: recv.media.canonicalId } }
 			)
 			// return and dont seek.
 			return
 		}
 		log('song already playing')
 	}
-	if (recv.mediaState === 'play') {
+	if (recv.playback.state === 'play') {
 		log('resuming song')
 		playerAPI.resume()
-	} else if (recv.mediaState === 'pause') {
+	} else if (recv.playback.state === 'pause') {
 		log('puaseing song')
 		playerAPI.pause()
 	}
 
 	// 80ms for compensating for JS function execution time
-	const latency = correctedNow() - recv.tms + 80
-	playerAPI.seekTo(recv.timestampMs + latency)
+	const latency = recv.playback.state === 'play' ? correctedNow() - recv.capturedAtMs + 80 : 0
+	playerAPI.seekTo(recv.playback.positionMs + latency)
 }
 
 const getAudioStateSpotify = async () => {
@@ -335,25 +335,13 @@ const getAudioStateSpotify = async () => {
 	const songURI = playerHarmonyState.track_window?.current_track?.uri || ''
 
 	const capturedAtMs = correctedNow()
-	const legacy = {
-		nodeId: 43,
-		timestampMs: timestampMs,
-		mediaState: playState,
-		service: 'spotify',
-		tms: capturedAtMs,
-		volume: 100,
-		isMuted: false,
-		playbackRate: 1,
-		playlistID: playlistID,
-		songURI: songURI,
-		durationMs: durationMs,
-	}
-	return withLegacyPlaybackFields({
+	return {
 		version: 2,
 		capturedAtMs,
 		source: { platform: 'desktop', adapter: 'spotify', service: 'spotify' },
 		media: {
 			canonicalId: songURI || undefined,
+			contextId: playlistID || undefined,
 			title: playerHarmonyState.track_window?.current_track?.name,
 			artist: playerHarmonyState.track_window?.current_track?.artists?.map((artist) => artist.name).join(', '),
 			durationMs,
@@ -361,7 +349,7 @@ const getAudioStateSpotify = async () => {
 		},
 		playback: { state: playState, positionMs: timestampMs, rate: 1, muted: false },
 		capabilities: { canPlay: true, canPause: true, canSeek: true, canSetRate: false, canLoadMedia: true },
-	}, legacy)
+	}
 }
 
 const getVideoCurrentState = (data) => {
@@ -376,20 +364,8 @@ const getVideoCurrentState = (data) => {
 		? 'pause'
 		: 'play'
 	const playbackRate = VID_ELEM?.playbackRate || 1
-	const legacy = {
-		nodeId: 42,
-		timestamp,
-		mediaState,
-		tms: capturedAtMs,
-		volume: VID_ELEM?.volume || 0,
-		isMuted: VID_ELEM?.muted || false,
-		resolution: '720p',
-		isCCOn: true,
-		playbackRate,
-		url,
-	}
 	const youtubeId = isYoutubeClient() ? new URL(url).searchParams.get('v') : null
-	return withLegacyPlaybackFields({
+	return {
 		version: 2,
 		capturedAtMs,
 		source: {
@@ -411,7 +387,7 @@ const getVideoCurrentState = (data) => {
 			muted: VID_ELEM?.muted || false,
 		},
 		capabilities: { canPlay: true, canPause: true, canSeek: true, canSetRate: true, canLoadMedia: true },
-	}, legacy)
+	}
 }
 
 const getMediaCurrentState = async (data) => {
@@ -457,6 +433,7 @@ const MEDIA = new MediaController({
 const onMediaEvent = async (result) => {
 	log('called onMediaEvent', result)
 	const data = normalizePlaybackPayload(result.data)
+	if (!data) return
 	if (!acceptOrderedPayload(data)) return
 	await sendLogToBG(`called onMediaEvent' ${result}`)
 	MEDIA.setVideo(VID_ELEM)
@@ -488,7 +465,7 @@ const onStreamChangeEvent = async (resp) => {
 	// in SPA like youtube playlists, for a same video in the playlist
 	// the url could be slightly different.
 	// so, stream_change should have a dedicated event.
-	const recvdURL = resp.data.url
+	const recvdURL = resp.data.media.url
 	const currURL = getTopURLSync()
 	// Native Android MediaSessions often expose title/artist/duration but no
 	// URL. The popup shows those details so the guest can open the media
@@ -804,8 +781,9 @@ window.addEventListener('message', async (event) => {
         return port.postMessage({ success: true })
     }
 
-    if (message.type === 'media_event') {
+	if (message.type === 'media_event') {
 		const normalized = normalizePlaybackPayload(message.data.data)
+		if (!normalized) return port.postMessage({})
 		if (isSpotifyService(normalized)) {
 			if (!acceptOrderedPayload(normalized)) return port.postMessage({})
             log('spotify media event')
@@ -817,8 +795,9 @@ window.addEventListener('message', async (event) => {
     } else if (message.type === 'sync_room_data') {
         onSyncRoomEvent()
         return port.postMessage({})
-    } else if (message.type === 'stream_change') {
+	} else if (message.type === 'stream_change') {
 		const normalized = normalizePlaybackPayload(message.data.data)
+		if (!normalized) return port.postMessage({})
 		if (!acceptOrderedPayload(normalized)) return port.postMessage({})
         // peek into the data to figure out the service type
         // and then navigate to it.
@@ -826,7 +805,7 @@ window.addEventListener('message', async (event) => {
 			const resp = normalized
             if (!isSpotifyClient()) {
                 await setPrevRoomInLS(message.data.roomName)
-                const playlistComps = resp.playlistID.split(':')
+				const playlistComps = (resp.media.contextId || '').split(':')
                 let rootPath = ''
                 if (playlistComps[1] === 'playlist') {
                     rootPath = '/playlist'

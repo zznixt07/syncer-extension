@@ -1,12 +1,33 @@
 html {
-    min-width: 200px;
+    width: 380px;
+    min-width: 380px;
+    max-width: 380px;
     background-color: black;
     color: white;
     /* min-height: 250px; */
 }
 
 body {
+    overflow-x: hidden;
     /* padding: 1rem; */
+}
+
+#rooms-list {
+    max-width: 100%;
+    white-space: normal;
+    overflow-x: hidden;
+}
+
+#rooms-list > div {
+    width: 100%;
+    min-width: 0;
+}
+
+#rooms-list > div > span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .pad {

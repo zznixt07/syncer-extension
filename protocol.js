@@ -1,34 +1,20 @@
-// Protocol-v2 compatibility lives here so both nested envelopes and legacy
-// flat payloads can be verified without loading a browser content script.
-export const normalizePlaybackPayload = (data = {}) => {
-	if (data.version !== 2 || !data.playback) return data
-	return {
-		...data,
-		timestamp: data.timestamp ?? data.playback.positionMs / 1000,
-		timestampMs: data.timestampMs ?? data.playback.positionMs,
-		tms: data.tms ?? data.capturedAtMs,
-		mediaState: data.mediaState ?? data.playback.state,
-		playbackRate: data.playbackRate ?? data.playback.rate,
-		isMuted: data.isMuted ?? data.playback.muted,
-		url: data.url ?? data.media?.url,
-		durationMs: data.durationMs ?? data.media?.durationMs,
-		service: data.service ?? data.source?.service ?? data.source?.adapter,
-	}
-}
+const PLAYBACK_STATES = new Set(['play', 'pause', 'buffer', 'ended'])
+const PLATFORMS = new Set(['desktop', 'android', 'ios'])
+const ADAPTERS = new Set(['html', 'media-session', 'youtube', 'spotify'])
+const CAPABILITIES = ['canPlay', 'canPause', 'canSeek', 'canSetRate', 'canLoadMedia']
 
-export const withLegacyPlaybackFields = (envelope, legacy = {}) => ({
-	...legacy,
-	...envelope,
-	timestamp: legacy.timestamp ?? envelope.playback.positionMs / 1000,
-	timestampMs: legacy.timestampMs ?? envelope.playback.positionMs,
-	tms: legacy.tms ?? envelope.capturedAtMs,
-	mediaState: legacy.mediaState ?? envelope.playback.state,
-	playbackRate: legacy.playbackRate ?? envelope.playback.rate,
-	isMuted: legacy.isMuted ?? envelope.playback.muted,
-	url: legacy.url ?? envelope.media?.url,
-	durationMs: legacy.durationMs ?? envelope.media?.durationMs,
-	service: legacy.service ?? envelope.source?.service ?? envelope.source?.adapter,
-})
+export const isPlaybackEnvelopeV2 = (data) => Boolean(
+	data && data.version === 2 && Number.isFinite(data.capturedAtMs) &&
+	data.source && PLATFORMS.has(data.source.platform) && ADAPTERS.has(data.source.adapter) &&
+	data.media && typeof data.media.isLive === 'boolean' &&
+	data.playback && PLAYBACK_STATES.has(data.playback.state) &&
+	Number.isFinite(data.playback.positionMs) && Number.isFinite(data.playback.rate) &&
+	data.capabilities && CAPABILITIES.every((key) => typeof data.capabilities[key] === 'boolean')
+)
+
+// Incoming room events are v2-only. Returning null lets content scripts ignore
+// malformed events without allowing them to disturb the active player.
+export const normalizePlaybackPayload = (data) => isPlaybackEnvelopeV2(data) ? data : null
 
 export class PlaybackSequenceGate {
 	#lastSequence = 0
@@ -38,8 +24,7 @@ export class PlaybackSequenceGate {
 	}
 
 	accept(data = {}) {
-		if (!Number.isFinite(data.sequence)) return true
-		if (data.sequence <= this.#lastSequence) return false
+		if (!Number.isFinite(data.sequence) || data.sequence <= this.#lastSequence) return false
 		this.#lastSequence = data.sequence
 		return true
 	}

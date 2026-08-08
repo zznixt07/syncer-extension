@@ -3,6 +3,21 @@
 Notable changes to Syncer. Versions before 1.2.0 predate this file; see the git
 history for those.
 
+## 1.2.1 — 2026-08-08
+
+### Added
+
+- **Syncer protocol v2 interoperability** for ordered playback events, stored
+  room snapshots, media identity, source details, and playback capabilities.
+  Playback events are now v2-only; flat legacy payloads are ignored.
+- **Android native-host guidance.** When a native MediaSession cannot provide
+  a navigable URL, guests can see the host's service, title, artist/channel,
+  and duration in the popup and copy the title for manual navigation.
+
+### Fixed
+
+- Stream-change events without a URL no longer attempt an invalid navigation.
+
 ## 1.2.0 — 2026-08-03
 
 The first release since 1.1.0, which shipped no functional changes of its own —

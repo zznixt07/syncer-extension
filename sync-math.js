@@ -19,8 +19,8 @@ transit time — a paused sender's clock isn't moving, so adding latency to it
 would push us ahead of them.
 */
 export const targetTimeFor = (data, nowMs) => {
-	const inFlightS = data.mediaState === 'play' ? (nowMs - data.tms) / 1000 : 0
-	return data.timestamp + inFlightS
+	const inFlightS = data.playback.state === 'play' ? (nowMs - data.capturedAtMs) / 1000 : 0
+	return data.playback.positionMs / 1000 + inFlightS
 }
 
 /*

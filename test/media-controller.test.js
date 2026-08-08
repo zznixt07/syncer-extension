@@ -7,7 +7,7 @@ import { FakeTimers, FakeVideo, gestureCapture } from './helpers/fakes.js'
 
 const NOW = 1_000_000
 
-// A controller wired to fakes, with the clock frozen so 'tms' arithmetic is exact.
+// A controller wired to fakes, with the clock frozen so capturedAtMs arithmetic is exact.
 const build = ({ video = new FakeVideo(), blockedCalls = [] } = {}) => {
 	const timers = new FakeTimers()
 	const gesture = gestureCapture()
@@ -24,12 +24,12 @@ const build = ({ video = new FakeVideo(), blockedCalls = [] } = {}) => {
 
 // A host event that says "I am at `at` seconds, playing, right now".
 const hostAt = (at, over = {}) => ({
-	timestamp: at,
-	tms: NOW,
-	mediaState: 'play',
-	playbackRate: 1,
-	isMuted: false,
+	version: 2,
+	capturedAtMs: NOW,
+	media: {isLive: false},
+	playback: {state: 'play', positionMs: at * 1000, rate: 1, muted: false},
 	...over,
+	playback: {state: 'play', positionMs: at * 1000, rate: 1, muted: false, ...over.playback},
 })
 
 test('small drift nudges the rate and leaves the position alone', async () => {
@@ -121,7 +121,7 @@ test('the room rate does not overwrite the nudge that was just applied', async (
 	// set playbackRate back to the room's 1 and the drift would never close.
 	const { media, video } = build({ video: new FakeVideo({ currentTime: 30.2 }) })
 
-	await media.applyRemoteState(hostAt(30, { playbackRate: 1 }))
+	await media.applyRemoteState(hostAt(30, { playback: { rate: 1 } }))
 
 	assert.equal(video.playbackRate, 1 - NUDGE_FACTOR, 'nudge survives the same event')
 })
@@ -135,7 +135,7 @@ test('a host speed change mid-correction re-bases the nudge', async () => {
 	// Host switches to 2x while we are still correcting. Still behind, so we
 	// keep correcting — but around 2x now, not around 1x.
 	video.currentTime = 30.2
-	await media.applyRemoteState(hostAt(30, { playbackRate: 2 }))
+	await media.applyRemoteState(hostAt(30, { playback: { rate: 2 } }))
 	assert.equal(video.playbackRate, 2 * (1 - NUDGE_FACTOR))
 
 	timers.advance(NUDGE_DURATION_MS)
@@ -145,7 +145,7 @@ test('a host speed change mid-correction re-bases the nudge', async () => {
 test('the room rate is applied normally when not nudging', async () => {
 	const { media, video } = build({ video: new FakeVideo({ currentTime: 30 }) })
 
-	await media.applyRemoteState(hostAt(30, { playbackRate: 1.5 }))
+	await media.applyRemoteState(hostAt(30, { playback: { rate: 1.5 } }))
 
 	assert.equal(video.playbackRate, 1.5)
 })
@@ -156,7 +156,7 @@ test('a buffering host pauses us and abandons any nudge', async () => {
 	await media.applyRemoteState(hostAt(30))
 	assert.ok(media.isNudging)
 
-	await media.applyRemoteState(hostAt(30.2, { mediaState: 'buffer' }))
+	await media.applyRemoteState(hostAt(30.2, { playback: { state: 'buffer' } }))
 
 	assert.equal(video.paused, true)
 	assert.equal(media.isNudging, false)
@@ -168,7 +168,7 @@ test('a paused host pauses us and abandons any nudge', async () => {
 	const { media, video } = build({ video: new FakeVideo({ currentTime: 30.2 }) })
 
 	await media.applyRemoteState(hostAt(30))
-	await media.applyRemoteState(hostAt(30.2, { mediaState: 'pause' }))
+	await media.applyRemoteState(hostAt(30.2, { playback: { state: 'pause' } }))
 
 	assert.equal(video.paused, true)
 	assert.equal(media.isNudging, false)
@@ -180,10 +180,10 @@ test('a paused host does not have transit time added to its position', async () 
 	const { media, video } = build({ video: new FakeVideo({ currentTime: 100, paused: true }) })
 
 	await media.applyRemoteState({
-		timestamp: 30,
-		tms: NOW - 5000,
-		mediaState: 'pause',
-		playbackRate: 1,
+		version: 2,
+		capturedAtMs: NOW - 5000,
+		media: {isLive: false},
+		playback: {state: 'pause', positionMs: 30_000, rate: 1},
 	})
 
 	assert.equal(video.currentTime, 30, 'exactly where the host is, not 35')
@@ -270,7 +270,7 @@ test('being in sync touches nothing', async () => {
 test('mute state follows the room', async () => {
 	const { media, video } = build({ video: new FakeVideo({ currentTime: 30 }) })
 
-	await media.applyRemoteState(hostAt(30, { isMuted: true }))
+	await media.applyRemoteState(hostAt(30, { playback: { muted: true } }))
 
 	assert.equal(video.muted, true)
 })

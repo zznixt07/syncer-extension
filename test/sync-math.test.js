@@ -23,19 +23,19 @@ const decide = (over) =>
 	})
 
 test('targetTimeFor advances a playing sender by the transit time', () => {
-	const data = { timestamp: 50, tms: 1_000_000, mediaState: 'play' }
+	const data = { capturedAtMs: 1_000_000, playback: { positionMs: 50_000, state: 'play' } }
 	// 400ms in flight
 	assert.equal(targetTimeFor(data, 1_000_400), 50.4)
 })
 
 test('targetTimeFor does not advance a paused sender', () => {
 	// A paused sender's clock isn't moving; adding latency would push us ahead.
-	const data = { timestamp: 50, tms: 1_000_000, mediaState: 'pause' }
+	const data = { capturedAtMs: 1_000_000, playback: { positionMs: 50_000, state: 'pause' } }
 	assert.equal(targetTimeFor(data, 1_005_000), 50)
 })
 
 test('targetTimeFor does not advance a buffering sender', () => {
-	const data = { timestamp: 50, tms: 1_000_000, mediaState: 'buffer' }
+	const data = { capturedAtMs: 1_000_000, playback: { positionMs: 50_000, state: 'buffer' } }
 	assert.equal(targetTimeFor(data, 1_005_000), 50)
 })
 
@@ -134,13 +134,13 @@ test('drift is reported signed, positive when ahead of the host', () => {
 
 test('end to end: a guest 200ms behind a playing host gets a speed-up', () => {
 	const now = 1_000_500
-	const fromHost = { timestamp: 30, tms: 1_000_000, mediaState: 'play', playbackRate: 1 }
+	const fromHost = { capturedAtMs: 1_000_000, playback: { positionMs: 30_000, state: 'play', rate: 1 } }
 	const targetTime = targetTimeFor(fromHost, now) // 30.5
 
 	const d = decideCorrection({
 		currentTime: 30.3,
 		targetTime,
-		roomRate: fromHost.playbackRate,
+		roomRate: fromHost.playback.rate,
 		isLive: false,
 		isPaused: false,
 		nudgeAttempts: 0,

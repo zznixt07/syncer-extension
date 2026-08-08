@@ -131,7 +131,7 @@ export class MediaController {
 		const decision = decideCorrection({
 			currentTime: video.currentTime,
 			targetTime,
-			roomRate: data.playbackRate,
+			roomRate: data.playback.rate,
 			isLive: this.isLive(),
 			isPaused: video.paused,
 			nudgeAttempts: this._nudgeAttempts,
@@ -159,29 +159,29 @@ export class MediaController {
 		const video = this.video
 		if (!video) return false
 
-		if (!isNaN(parseFloat(data.timestamp))) this.correctPosition(data)
+		if (Number.isFinite(data.playback.positionMs)) this.correctPosition(data)
 
-		if (data.mediaState === 'buffer' && !video.paused) {
+		if (data.playback.state === 'buffer' && !video.paused) {
 			this.cancelNudge()
 			video.pause()
-		} else if (data.mediaState === 'play' && video.paused) {
+		} else if (data.playback.state === 'play' && video.paused) {
 			await this.play()
-		} else if (data.mediaState === 'pause' && !video.paused) {
+		} else if (data.playback.state === 'pause' && !video.paused) {
 			this.cancelNudge()
 			video.pause()
 		}
 
-		if (!isNaN(parseFloat(data.playbackRate))) {
+		if (Number.isFinite(data.playback.rate)) {
 			if (this._nudgeTimer) {
 				// Applying it now would wipe the correction on the very next
 				// event and it would never converge. Just keep the restore
 				// target current in case the host changes speed mid-nudge.
-				this._nudgeBaseRate = data.playbackRate
+				this._nudgeBaseRate = data.playback.rate
 			} else {
-				video.playbackRate = data.playbackRate
+				video.playbackRate = data.playback.rate
 			}
 		}
-		video.muted = data.isMuted
+		if (data.playback.muted !== undefined) video.muted = data.playback.muted
 		return true
 	}
 }
