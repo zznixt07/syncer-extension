@@ -55,6 +55,17 @@
             <!-- <button class="btn" id="change-room-stream">Change Stream</button> -->
         </div>
     </div>
+    <section id="host-media" class="host-media" hidden>
+        <h3>Host media</h3>
+        <p class="host-media-instruction">Open this media manually, then Syncer will follow play, pause, and seek.</p>
+        <dl>
+            <div><dt>Service</dt><dd id="host-media-service"></dd></div>
+            <div><dt>Title</dt><dd id="host-media-title"></dd></div>
+            <div id="host-media-artist-row"><dt>Artist/channel</dt><dd id="host-media-artist"></dd></div>
+            <div id="host-media-duration-row"><dt>Duration</dt><dd id="host-media-duration"></dd></div>
+        </dl>
+        <button id="copy-host-media-title" class="btn host-media-copy" type="button">Copy title</button>
+    </section>
     <div>
         <div>
             <span>Rooms</span>

@@ -490,6 +490,10 @@ const onStreamChangeEvent = async (resp) => {
 	// so, stream_change should have a dedicated event.
 	const recvdURL = resp.data.url
 	const currURL = getTopURLSync()
+	// Native Android MediaSessions often expose title/artist/duration but no
+	// URL. The popup shows those details so the guest can open the media
+	// manually; there is nothing safe to navigate to from this event.
+	if (!recvdURL) return
 	if (recvdURL !== currURL) {
 		// special case for youtube playlist
 		if (recvdURL.includes('list=')) {

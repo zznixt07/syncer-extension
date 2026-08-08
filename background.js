@@ -6,6 +6,7 @@
 /* global chrome */
 
 import { io } from '/lib/socket.io.min.js'
+import { hostMediaFallbackFromEvent } from './host-media.js'
 
 const EXT_ID = `${chrome.runtime.id}`
 const STORAGE_KEY = `${EXT_ID}_prev_room`
@@ -14,6 +15,7 @@ const ROOM_TOKEN_PREFIX = `${EXT_ID}_room_token_`
 const URLS_REDIRECTS_COUNT = {}
 const CONNECT_TIMEOUT_MS = 5000
 const SOCKET_ACK_TIMEOUT_MS = 5000
+const HOST_MEDIA_KEY_PREFIX = `${EXT_ID}_host_media_`
 
 const log = (...msg) => {
 	// console.log('BG:', ...msg)
@@ -328,6 +330,28 @@ const requestEventFromOwner = ({ roomName }) => {
 const sendMsgToTab = (tabId, success, msg) =>
 	chrome.tabs.sendMessage(tabId, { success: success, data: msg })
 
+const hostMediaKey = (tabId) => `${HOST_MEDIA_KEY_PREFIX}${tabId}`
+
+const getHostMedia = async (tabId) => {
+	if (tabId == null) return null
+	const key = hostMediaKey(tabId)
+	const stored = await chrome.storage.session.get(key)
+	return stored[key] || null
+}
+
+const clearHostMedia = async (tabId) => {
+	if (tabId == null) return
+	await chrome.storage.session.remove(hostMediaKey(tabId))
+	chrome.runtime.sendMessage({ type: 'host_media', data: { tabId, media: null } }).catch(() => {})
+}
+
+const updateHostMedia = async (tabId, event) => {
+	const media = hostMediaFallbackFromEvent(event)
+	if (!media) return clearHostMedia(tabId)
+	await chrome.storage.session.set({ [hostMediaKey(tabId)]: media })
+	chrome.runtime.sendMessage({ type: 'host_media', data: { tabId, media } }).catch(() => {})
+}
+
 let LISTEN_EVTS_CALLED = 0
 const listenToEvents = (tabId, frameId) => {
     log('Number of times listenEvents() was called:', LISTEN_EVTS_CALLED++)
@@ -341,12 +365,14 @@ const listenToEvents = (tabId, frameId) => {
 
     SOCKET.on('media_event', (result) => {
         log('media event')
+		updateHostMedia(tabId, result).catch(() => {})
         chrome.tabs.sendMessage(tabId, { type: 'media_event', data: result }, opts)
     })
     SOCKET.on('sync_room_data', (result) => {
         chrome.tabs.sendMessage(tabId, { type: 'sync_room_data', data: result }, opts)
     })
     SOCKET.on('stream_change', (result) => {
+		updateHostMedia(tabId, result).catch(() => {})
         chrome.tabs.sendMessage(tabId, { type: 'stream_change', data: result }, opts)
     })
 }
@@ -376,6 +402,7 @@ const setSession = (tabId, session) => {
 
 const deleteSession = (tabId) => {
     forgetNavigation(tabId)
+	clearHostMedia(tabId).catch(() => {})
     if (!activeTabSessions.delete(tabId)) return Promise.resolve()
     return persistSessions()
 }
@@ -666,7 +693,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         }
 
         // Pushed by us for the popup — never route it into the socket branch below.
-        if (message.type === 'room_user_count') {
+        if (message.type === 'room_user_count' || message.type === 'host_media') {
             sendResponse()
             return
         }
@@ -696,6 +723,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             sendResponse()
         } else if (message.type === 'get_server_address') {
             sendResponse(await getServerAddress())
+		} else if (message.type === 'get_host_media') {
+			sendResponse(await getHostMedia(message.data?.tabId))
         } else if (message.type === 'log') {
             console.log('log from content script:', message.data)
             sendResponse()
@@ -851,6 +880,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                 const res = await createRoom(message.data)
                 if (res.success) {
                     const tabId = sender.tab.id
+					await clearHostMedia(tabId)
                     const frameId = videoFrameMap.get(tabId) ?? sender.frameId
                     // Track the session so the owner also gets a badge and a
                     // restorable popup, same as join_room does.
@@ -867,6 +897,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                 if (res.success) {
                     const tabId = message.data?.tabId ?? sender.tab?.id
                     if (tabId != null) {
+						await clearHostMedia(tabId)
                         // Track the active session
                         await setSession(tabId, {
                             roomName: message.data.roomName,

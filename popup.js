@@ -142,6 +142,55 @@ wc-toast-content {
 	const serverAddressInput = document.getElementById('server-address')
 	const roomUserCountElem = document.getElementById('room-user-count')
 	const recheckBtn = document.getElementById('recheck-video')
+	const hostMediaElem = document.getElementById('host-media')
+	const hostMediaServiceElem = document.getElementById('host-media-service')
+	const hostMediaTitleElem = document.getElementById('host-media-title')
+	const hostMediaArtistElem = document.getElementById('host-media-artist')
+	const hostMediaArtistRow = document.getElementById('host-media-artist-row')
+	const hostMediaDurationElem = document.getElementById('host-media-duration')
+	const hostMediaDurationRow = document.getElementById('host-media-duration-row')
+	const copyHostMediaTitleBtn = document.getElementById('copy-host-media-title')
+	let displayedHostMediaTitle = ''
+
+	const formatDuration = (durationMs) => {
+		if (!Number.isFinite(durationMs) || durationMs <= 0) return ''
+		const totalSeconds = Math.round(durationMs / 1000)
+		const hours = Math.floor(totalSeconds / 3600)
+		const minutes = Math.floor((totalSeconds % 3600) / 60)
+		const seconds = totalSeconds % 60
+		return hours
+			? `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
+			: `${minutes}:${String(seconds).padStart(2, '0')}`
+	}
+
+	const renderHostMedia = (media) => {
+		if (!hostMediaElem) return
+		if (!media) {
+			displayedHostMediaTitle = ''
+			hostMediaElem.hidden = true
+			return
+		}
+		hostMediaServiceElem.textContent = media.service || 'Media app'
+		displayedHostMediaTitle = media.title || ''
+		hostMediaTitleElem.textContent = displayedHostMediaTitle || 'Unknown title'
+		copyHostMediaTitleBtn.hidden = !displayedHostMediaTitle
+		hostMediaArtistElem.textContent = media.artist || ''
+		hostMediaArtistRow.hidden = !media.artist
+		const duration = formatDuration(media.durationMs)
+		hostMediaDurationElem.textContent = duration
+		hostMediaDurationRow.hidden = !duration
+		hostMediaElem.hidden = false
+	}
+
+	copyHostMediaTitleBtn?.addEventListener('click', async () => {
+		if (!displayedHostMediaTitle) return
+		try {
+			await navigator.clipboard.writeText(displayedHostMediaTitle)
+			success('Video title copied')
+		} catch (error) {
+			fail(`Could not copy title: ${error.message}`)
+		}
+	})
 
 	// The server counts everyone in the room, including us. What actually matters
 	// is how many *other* people are watching, so subtract ourselves when we're in.
@@ -428,6 +477,10 @@ wc-toast-content {
 
 	// Live updates pushed by the background.
 	chrome.runtime.onMessage.addListener((message) => {
+		if (message?.type === 'host_media') {
+			if (message.data?.tabId === tab?.id) renderHostMedia(message.data.media)
+			return
+		}
 		if (message?.type === 'connection_state') {
 			if (!activeRoomName) return
 			if (message.data?.connected) {
@@ -455,4 +508,5 @@ wc-toast-content {
 		document.getElementById('new-room-name').value = roomStatus.roomName
 		updateRoomUserCount(roomStatus.roomName, roomStatus.userCount)
 	}
+	renderHostMedia(await sendMessageToBG('get_host_media', { tabId: tab?.id }))
 }

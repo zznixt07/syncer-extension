@@ -150,3 +150,48 @@ input {
 .pushable:focus:not(:focus-visible) {
     outline: none;
 }
+
+.host-media {
+    margin: 8px 0;
+    padding: 10px;
+    border: 1px solid #555;
+    border-radius: 6px;
+    background: #171717;
+}
+
+.host-media h3,
+.host-media p {
+    margin: 0 0 8px;
+}
+
+.host-media-instruction {
+    color: #ffd27a;
+    font-size: 12px;
+    line-height: 1.35;
+}
+
+.host-media dl,
+.host-media dl div {
+    margin: 0;
+}
+
+.host-media dl div {
+    display: grid;
+    grid-template-columns: 80px minmax(0, 1fr);
+    gap: 8px;
+    padding: 3px 0;
+}
+
+.host-media dt {
+    color: #aaa;
+}
+
+.host-media dd {
+    margin: 0;
+    overflow-wrap: anywhere;
+}
+
+.host-media-copy {
+    margin: 8px 0 0;
+    padding: 7px 10px;
+}
