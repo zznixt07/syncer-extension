@@ -1,4 +1,5 @@
 import { MediaController } from './media-controller.js'
+import { normalizePlaybackPayload, PlaybackSequenceGate, withLegacyPlaybackFields } from './protocol.js'
 
 const sendMessageToBG = async (message) => {
     return new Promise((resolve) => {
@@ -25,6 +26,8 @@ let VID_ELEM = null
 let IS_OWNER = false
 let _scanObserver = null
 let _scanTimer = null
+let _snapshotTimer = null
+const PLAYBACK_SEQUENCE = new PlaybackSequenceGate()
 
 // The top-frame URL — needed because this script may run inside an iframe
 // where window.location.href is about:blank or the iframe's own URL.
@@ -158,6 +161,8 @@ const isYoutubeClient = () =>
 const isYoutubeService = (data) => data.service === 'youtube'
 const isSpotifyClient = () => window.location.host.startsWith('open.spotify')
 const isSpotifyService = (data) => data.service === 'spotify'
+
+const acceptOrderedPayload = (data = {}) => PLAYBACK_SEQUENCE.accept(data)
 
 // console.log(await sendMessageToBG({ type: 'log', data: Array.from(document.querySelectorAll('video')).map(e => e.innerHTML) }))
 
@@ -329,12 +334,13 @@ const getAudioStateSpotify = async () => {
 	const playlistID = playerHarmonyState.context?.uri || ''
 	const songURI = playerHarmonyState.track_window?.current_track?.uri || ''
 
-	return {
+	const capturedAtMs = correctedNow()
+	const legacy = {
 		nodeId: 43,
 		timestampMs: timestampMs,
 		mediaState: playState,
 		service: 'spotify',
-		tms: correctedNow(),
+		tms: capturedAtMs,
 		volume: 100,
 		isMuted: false,
 		playbackRate: 1,
@@ -342,25 +348,70 @@ const getAudioStateSpotify = async () => {
 		songURI: songURI,
 		durationMs: durationMs,
 	}
+	return withLegacyPlaybackFields({
+		version: 2,
+		capturedAtMs,
+		source: { platform: 'desktop', adapter: 'spotify', service: 'spotify' },
+		media: {
+			canonicalId: songURI || undefined,
+			title: playerHarmonyState.track_window?.current_track?.name,
+			artist: playerHarmonyState.track_window?.current_track?.artists?.map((artist) => artist.name).join(', '),
+			durationMs,
+			isLive: false,
+		},
+		playback: { state: playState, positionMs: timestampMs, rate: 1, muted: false },
+		capabilities: { canPlay: true, canPause: true, canSeek: true, canSetRate: false, canLoadMedia: true },
+	}, legacy)
 }
 
 const getVideoCurrentState = (data) => {
-	return {
+	const capturedAtMs = correctedNow()
+	const url = getTopURLSync()
+	const timestamp = VID_ELEM?.currentTime || 0
+	const mediaState = data?.isBuffering
+		? 'buffer'
+		: VID_ELEM?.ended
+		? 'ended'
+		: VID_ELEM?.paused
+		? 'pause'
+		: 'play'
+	const playbackRate = VID_ELEM?.playbackRate || 1
+	const legacy = {
 		nodeId: 42,
-		timestamp: VID_ELEM?.currentTime || 0,
-		mediaState: data?.isBuffering
-			? 'buffer'
-			: VID_ELEM?.paused
-			? 'pause'
-			: 'play',
-		tms: correctedNow(),
+		timestamp,
+		mediaState,
+		tms: capturedAtMs,
 		volume: VID_ELEM?.volume || 0,
 		isMuted: VID_ELEM?.muted || false,
 		resolution: '720p',
 		isCCOn: true,
-		playbackRate: VID_ELEM?.playbackRate || 1,
-		url: getTopURLSync(),
+		playbackRate,
+		url,
 	}
+	const youtubeId = isYoutubeClient() ? new URL(url).searchParams.get('v') : null
+	return withLegacyPlaybackFields({
+		version: 2,
+		capturedAtMs,
+		source: {
+			platform: 'desktop',
+			adapter: isYoutubeClient() ? 'youtube' : 'html',
+			service: isYoutubeClient() ? 'youtube' : 'web',
+		},
+		media: {
+			canonicalId: youtubeId || url,
+			url,
+			title: document.title,
+			durationMs: Number.isFinite(VID_ELEM?.duration) ? VID_ELEM.duration * 1000 : undefined,
+			isLive: !Number.isFinite(VID_ELEM?.duration) || VID_ELEM?.duration === 0,
+		},
+		playback: {
+			state: mediaState,
+			positionMs: timestamp * 1000,
+			rate: playbackRate,
+			muted: VID_ELEM?.muted || false,
+		},
+		capabilities: { canPlay: true, canPause: true, canSeek: true, canSetRate: true, canLoadMedia: true },
+	}, legacy)
 }
 
 const getMediaCurrentState = async (data) => {
@@ -405,7 +456,8 @@ const MEDIA = new MediaController({
 
 const onMediaEvent = async (result) => {
 	log('called onMediaEvent', result)
-	const { data } = result
+	const data = normalizePlaybackPayload(result.data)
+	if (!acceptOrderedPayload(data)) return
 	await sendLogToBG(`called onMediaEvent' ${result}`)
 	MEDIA.setVideo(VID_ELEM)
 	if (!(await MEDIA.applyRemoteState(data))) {
@@ -519,6 +571,11 @@ const sendSeekEvent = () => {
 }
 
 const listenToMediaEvents = () => {
+	if (!_snapshotTimer) {
+		_snapshotTimer = setInterval(() => {
+			if (IS_OWNER && currRoom) sendMediaEvent()
+		}, 5000)
+	}
 	if (isSpotifyClient()) {
 		return listenToSpotifyAudioEvents()
 	}
@@ -552,6 +609,10 @@ const listenToSpotifyAudioEvents = () => {
 }
 
 const removeVideoEvents = () => {
+	if (_snapshotTimer) {
+		clearInterval(_snapshotTimer)
+		_snapshotTimer = null
+	}
 	if (!VID_ELEM) return
 	VID_ELEM.removeEventListener('play', sendPlayEvent)
 	VID_ELEM.removeEventListener('pause', sendPauseEvent)
@@ -600,6 +661,7 @@ const createRoom = async (roomName) => {
 		data: { roomName: roomName, meta: await getMediaCurrentState() },
 	})
 	if (result.success) {
+		PLAYBACK_SEQUENCE.reset()
 		// if room was created, we are the owner now and we should install listeners for media events to forward to room members.
 		currUrl = getTopURLSync()
 		currRoom = await sendMessageToBG({
@@ -619,6 +681,7 @@ const joinRoom = async (roomName) => {
 		data: { roomName: roomName },
 	})
 	if (result.success) {
+		PLAYBACK_SEQUENCE.reset()
 		currRoom = await sendMessageToBG({
 			type: 'set_storage',
 			data: { key: CURR_ROOM_ID, value: roomName },
@@ -644,6 +707,7 @@ const leaveRoom = async (roomName) => {
 		data: { roomName: roomName },
 	})
 	if (result.success) {
+		PLAYBACK_SEQUENCE.reset()
 		currRoom = await sendMessageToBG({
 			type: 'set_storage',
 			data: { key: CURR_ROOM_ID, value: null },
@@ -711,6 +775,7 @@ window.addEventListener('message', async (event) => {
 		VID_ELEM = findBestVideoElement()
 		await sendLogToBG('setupafterjoin, video element: ' + !!VID_ELEM)
         IS_OWNER = !!message.isOwner
+		PLAYBACK_SEQUENCE.reset()
         if (IS_OWNER) {
             listenToMediaEvents()
         }
@@ -736,21 +801,25 @@ window.addEventListener('message', async (event) => {
     }
 
     if (message.type === 'media_event') {
-        if (isSpotifyService(message.data.data)) {
+		const normalized = normalizePlaybackPayload(message.data.data)
+		if (isSpotifyService(normalized)) {
+			if (!acceptOrderedPayload(normalized)) return port.postMessage({})
             log('spotify media event')
-            handleSpotifyStreamEvent(message.data.data)
-        } else {
-            onMediaEvent(message.data)
+			handleSpotifyStreamEvent(normalized)
+		} else {
+			onMediaEvent({ ...message.data, data: normalized })
         }
         return port.postMessage({})
     } else if (message.type === 'sync_room_data') {
         onSyncRoomEvent()
         return port.postMessage({})
     } else if (message.type === 'stream_change') {
+		const normalized = normalizePlaybackPayload(message.data.data)
+		if (!acceptOrderedPayload(normalized)) return port.postMessage({})
         // peek into the data to figure out the service type
         // and then navigate to it.
-        if (isSpotifyService(message.data.data)) {
-            const resp = message.data.data
+		if (isSpotifyService(normalized)) {
+			const resp = normalized
             if (!isSpotifyClient()) {
                 await setPrevRoomInLS(message.data.roomName)
                 const playlistComps = resp.playlistID.split(':')
@@ -768,8 +837,8 @@ window.addEventListener('message', async (event) => {
                 return
             }
             handleSpotifyStreamEvent(resp, true)
-        } else {
-            onStreamChangeEvent(message.data)
+		} else {
+			onStreamChangeEvent({ ...message.data, data: normalized })
         }
         return port.postMessage({})
     }

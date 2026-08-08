@@ -28,6 +28,7 @@ const FILES = [
 	// content scripts (content-script.js injects main-content-script.js)
 	'content-script.js',
 	'main-content-script.js',
+	'protocol.js',
 	'media-controller.js',
 	'sync-math.js',
 	// popup

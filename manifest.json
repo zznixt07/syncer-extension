@@ -44,6 +44,7 @@
             "resources": [
                 "lib/socket.io.min.js",
                 "main-content-script.js",
+                "protocol.js",
                 "sync-math.js",
                 "media-controller.js"
             ],
