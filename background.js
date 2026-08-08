@@ -875,6 +875,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                     const topUrl = await getTopFrameUrl(sender.tab.id)
                     if (topUrl && message.data?.meta) {
                         message.data.meta.url = topUrl
+						if (message.data.meta.media) message.data.meta.media.url = topUrl
                     }
                 }
                 const res = await createRoom(message.data)

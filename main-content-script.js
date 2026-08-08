@@ -652,6 +652,10 @@ const createRoom = async (roomName) => {
 		IS_OWNER = true
 		listenToMediaEvents()
 		startAutoVideoScan()
+		// Seed the server immediately instead of waiting for a media callback or
+		// a guest-triggered state request. MV3 may suspend the worker first.
+		await sendStreamChangeEvent()
+		await sendMediaEvent()
 	}
 	return result
 }

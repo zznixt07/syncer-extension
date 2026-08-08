@@ -17,6 +17,9 @@ history for those.
 ### Fixed
 
 - Stream-change events without a URL no longer attempt an invalid navigation.
+- A newly created room now publishes its current stream and playback state
+  immediately, allowing the first guest to navigate without waiting for a
+  later player callback.
 
 ## 1.2.0 — 2026-08-03
 
