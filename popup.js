@@ -264,7 +264,7 @@ wc-toast-content {
 		try {
 			const result = await sendMessageToBG('list_rooms')
 			if (result?.success) {
-				const dataList = document.getElementById('rooms')
+				const dataList = document.getElementById('room-suggestions')
 				const roomList = document.querySelector('pre#rooms-list')
 				dataList.innerHTML = ''
 				roomList.textContent = ''
