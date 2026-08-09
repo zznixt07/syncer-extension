@@ -2,7 +2,7 @@
 /* global chrome */
 
 const script = document.createElement('script')
-script.src = chrome.runtime.getURL('main-content-script.js')
+script.src = chrome.runtime.getURL('generated/main-content-script.js')
 // assign type module so importing is allowed.
 script.type = 'module'
 script.onload = function () {

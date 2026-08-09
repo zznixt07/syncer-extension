@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { isPlaybackEnvelopeV2, normalizePlaybackPayload, PlaybackSequenceGate } from '../protocol.js'
+import {isPlaybackEnvelopeV2, normalizePlaybackPayload, PlaybackSequenceGate} from 'syncer-extension-core'
 
 const envelope = (overrides = {}) => ({
 	version: 2,

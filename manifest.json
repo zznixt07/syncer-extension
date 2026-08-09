@@ -27,7 +27,7 @@
         "default_popup": "popup.html"
     },
     "background": {
-        "service_worker": "background.js",
+        "service_worker": "generated/background.js",
         "type": "module"
     },
     "permissions": [
@@ -42,11 +42,7 @@
     "web_accessible_resources": [
         {
             "resources": [
-                "lib/socket.io.min.js",
-                "main-content-script.js",
-                "protocol.js",
-                "sync-math.js",
-                "media-controller.js"
+                "generated/main-content-script.js"
             ],
             "matches": [
                 "<all_urls>"

@@ -22,19 +22,15 @@ const DIST = path.join(ROOT, 'dist')
 const FILES = [
 	'manifest.json',
 	'icon.png',
-	// background service worker + its dependencies
-	'background.js',
-	'host-media.js',
-	'lib/socket.io.min.js',
+	// generated background service worker (Socket.IO and core are bundled)
+	'generated/background.js',
 	// content scripts (content-script.js injects main-content-script.js)
 	'content-script.js',
-	'main-content-script.js',
-	'protocol.js',
-	'media-controller.js',
-	'sync-math.js',
+	'generated/main-content-script.js',
 	// popup
 	'popup.html',
-	'popup.js',
+	'generated/popup.js',
+	'generated/popup-base.css',
 	'index.css',
 	'lib/wc-toast.js',
 ]

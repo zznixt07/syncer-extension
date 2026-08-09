@@ -1,8 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { MediaController } from '../media-controller.js'
-import { MAX_NUDGE_ATTEMPTS, NUDGE_DURATION_MS, NUDGE_FACTOR } from '../sync-math.js'
+import {MediaController, MAX_NUDGE_ATTEMPTS, NUDGE_DURATION_MS, NUDGE_FACTOR} from 'syncer-extension-core'
 import { FakeTimers, FakeVideo, gestureCapture } from './helpers/fakes.js'
 
 const NOW = 1_000_000

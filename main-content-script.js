@@ -1,5 +1,4 @@
-import { MediaController } from './media-controller.js'
-import { normalizePlaybackPayload, PlaybackSequenceGate } from './protocol.js'
+import {MediaController, normalizePlaybackPayload, PlaybackSequenceGate} from 'syncer-extension-core'
 
 const sendMessageToBG = async (message) => {
     return new Promise((resolve) => {

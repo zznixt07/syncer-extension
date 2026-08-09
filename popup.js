@@ -1,4 +1,5 @@
 import { toast } from './lib/wc-toast.js'
+import {formatDuration, normalizePopupAction} from 'syncer-extension-core/popup'
 
 // Declare chrome as a global variable for linting tools
 /* global chrome */
@@ -151,17 +152,6 @@ wc-toast-content {
 	const hostMediaDurationRow = document.getElementById('host-media-duration-row')
 	const copyHostMediaTitleBtn = document.getElementById('copy-host-media-title')
 	let displayedHostMediaTitle = ''
-
-	const formatDuration = (durationMs) => {
-		if (!Number.isFinite(durationMs) || durationMs <= 0) return ''
-		const totalSeconds = Math.round(durationMs / 1000)
-		const hours = Math.floor(totalSeconds / 3600)
-		const minutes = Math.floor((totalSeconds % 3600) / 60)
-		const seconds = totalSeconds % 60
-		return hours
-			? `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
-			: `${minutes}:${String(seconds).padStart(2, '0')}`
-	}
 
 	const renderHostMedia = (media) => {
 		if (!hostMediaElem) return
@@ -446,7 +436,8 @@ wc-toast-content {
 	})
 
 	const updateServerAddress = async (newAddress) => {
-		await sendMessageToBG('set_server_address', newAddress)
+		const action = normalizePopupAction({type: 'save_server', serverUrl: newAddress})
+		await sendMessageToBG('set_server_address', action.serverUrl)
 	}
 	let storedServerAddress = ''
 	let errorOnAddress = false

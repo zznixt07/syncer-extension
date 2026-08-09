@@ -5,8 +5,8 @@
 // Declare chrome as a global variable for linting tools
 /* global chrome */
 
-import { io } from '/lib/socket.io.min.js'
-import { hostMediaFallbackFromEvent } from './host-media.js'
+import {io} from 'socket.io-client'
+import {hostMediaFallbackFromEvent} from 'syncer-extension-core'
 
 const EXT_ID = `${chrome.runtime.id}`
 const STORAGE_KEY = `${EXT_ID}_prev_room`

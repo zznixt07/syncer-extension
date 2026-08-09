@@ -4,12 +4,18 @@
   "type": "module",
   "description": "Tooling only — the extension itself has no build step and no dependencies.",
   "scripts": {
-    "test": "node --test",
+    "build": "node scripts/build.mjs",
+    "test": "npm run build && node --test",
     "test:e2e": "playwright test",
-    "package": "node scripts/package.mjs",
+    "package": "npm run build && node scripts/package.mjs",
     "release": "node scripts/publish.mjs"
   },
   "devDependencies": {
-    "@playwright/test": "^1.62.1"
+    "@playwright/test": "^1.62.1",
+    "esbuild": "^0.25.12"
+  },
+  "dependencies": {
+    "socket.io-client": "4.8.3",
+    "syncer-extension-core": "github:zznixt07/syncer-extension-core#b2651f4381fb8d881ab56c4e42d8e6db9505a28f"
   }
 }

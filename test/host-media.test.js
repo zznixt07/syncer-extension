@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { hostMediaFallbackFromEvent } from '../host-media.js'
+import {hostMediaFallbackFromEvent} from 'syncer-extension-core'
 
 test('extracts manual-navigation metadata from an Android native session', () => {
 	const result = hostMediaFallbackFromEvent({

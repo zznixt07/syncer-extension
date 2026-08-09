@@ -8,7 +8,7 @@ import {
 	NUDGE_FACTOR,
 	decideCorrection,
 	targetTimeFor,
-} from '../sync-math.js'
+} from 'syncer-extension-core'
 
 // Defaults for the fields a given test doesn't care about.
 const decide = (over) =>

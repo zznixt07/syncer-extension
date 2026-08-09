@@ -1,5 +1,7 @@
 # Releasing
 
+Runtime resources are generated from the root entry-point sources with `npm run build`. The build bundles Socket.IO and the exact Git-pinned `syncer-extension-core` commit into `generated/`; the Chrome package never resolves npm packages at runtime. When updating the core pin, run `npm install`, `npm test`, `npm run package`, and the Playwright suite with `SYNCER_SERVER_DIR` set, then commit the lockfile and generated resources together.
+
 ```sh
 bump-my-version bump minor   # or patch — commits and tags
 npm run package              # -> dist/syncer-<version>.zip
