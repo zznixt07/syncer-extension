@@ -4,77 +4,82 @@
 <head>
     <meta charset="utf-8" />
     <meta http-equiv="X-UA-Compatible" content="IE=edge" />
-    <title>POPUP</title>
+    <title>Syncer</title>
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <script src="generated/popup.js" type="module"></script>
     <link rel="stylesheet" href="generated/popup-base.css">
     <link rel="stylesheet" href="./index.css">
-    <style>
-
-    </style>
 </head>
 
 <body>
-    <div class="input-container">
-        <h3>
-            <label for="server-address">
-                Server Address
-            </label>
-        </h3>
-        <input type="text" id="server-address" minlength="1" value="http://127.0.0.1:3000">
-    </div>
-    <div class="input-container">
-        <h3>
-            <label for="new-room-name">
-                Room Name
-            </label>
-        </h3>
-        <input type="text" id="new-room-name" minlength="1" list="room-suggestions" value="chill-music-24/7">
-        <p id="room-user-count" class="room-user-count"></p>
-        <datalist id="room-suggestions">
+    <header class="app-header">
+        <div class="brand-mark" aria-hidden="true">S</div>
+        <div>
+            <h1>Syncer</h1>
+            <p>Watch and listen together.</p>
+        </div>
+    </header>
 
-        </datalist>
-    </div>
-    <div class="flex">
-        <div class="pad flex">
-            <button id="create-room" class="btn pushable">
-                <!-- <span class="shadow"></span>
-                <span class="edge"></span>
-                <span class="front"> -->
-                Create Room
-                <!-- </span> -->
-            </button>
-            <!-- <input type="text" id="join-room-name" name="join-room-name" value="shailesh"> -->
-            <button class="btn pushable" id="join-room">
-                Join Room
-            </button>
-            <button class="btn pushable" id="leave-room">
-                Leave Room
-            </button>
-        </div>
-        <div>
-            <!-- <button class="btn" id="change-room-stream">Change Stream</button> -->
-        </div>
-    </div>
-    <section id="host-media" class="host-media" hidden>
-        <h3>Host media</h3>
+    <main>
+        <section class="panel rooms-panel" aria-labelledby="rooms-heading">
+            <div class="section-heading">
+                <div>
+                    <span class="eyebrow">Public rooms</span>
+                    <h2 id="rooms-heading">Join a room</h2>
+                </div>
+                <button class="btn btn-quiet btn-compact" id="list-rooms" type="button" title="Refresh rooms">
+                    <span aria-hidden="true">↻</span> Refresh
+                </button>
+            </div>
+            <div id="rooms-list" class="room-list" aria-live="polite">
+                <p class="empty-state">Loading rooms…</p>
+            </div>
+        </section>
+
+        <section id="host-media" class="panel host-media" hidden>
+            <span class="eyebrow">Now playing</span>
+            <h2>Host media</h2>
         <p class="host-media-instruction">Open this media manually, then Syncer will follow play, pause, and seek.</p>
-        <dl>
-            <div><dt>Service</dt><dd id="host-media-service"></dd></div>
-            <div><dt>Title</dt><dd id="host-media-title"></dd></div>
-            <div id="host-media-artist-row"><dt>Artist/channel</dt><dd id="host-media-artist"></dd></div>
-            <div id="host-media-duration-row"><dt>Duration</dt><dd id="host-media-duration"></dd></div>
-        </dl>
-        <button id="copy-host-media-title" class="btn host-media-copy" type="button">Copy title</button>
-    </section>
-    <div>
-        <div>
-            <span>Rooms</span>
-            <button class="btn pushable" id="list-rooms">List Rooms</button>
-        </div>
-        <pre id="rooms-list"></pre>
-    </div>
-    <button class="btn pushable" id="recheck-video">Recheck Video</button>
+            <dl>
+                <div><dt>Service</dt><dd id="host-media-service"></dd></div>
+                <div><dt>Title</dt><dd id="host-media-title"></dd></div>
+                <div id="host-media-artist-row"><dt>Artist/channel</dt><dd id="host-media-artist"></dd></div>
+                <div id="host-media-duration-row"><dt>Duration</dt><dd id="host-media-duration"></dd></div>
+            </dl>
+            <button id="copy-host-media-title" class="btn btn-secondary host-media-copy" type="button">Copy title</button>
+        </section>
+
+        <section class="panel manual-room" aria-labelledby="manual-room-heading">
+            <div class="section-heading section-heading-simple">
+                <div>
+                    <span class="eyebrow">Room</span>
+                    <h2 id="manual-room-heading">Create or join by name</h2>
+                </div>
+            </div>
+            <label class="field-label" for="new-room-name">Room name</label>
+            <input type="text" id="new-room-name" minlength="1" list="room-suggestions" placeholder="e.g. movie-night" autocomplete="off">
+            <p id="room-user-count" class="room-user-count" aria-live="polite"></p>
+            <datalist id="room-suggestions"></datalist>
+            <div class="room-actions">
+                <button id="create-room" class="btn btn-primary" type="button">Create</button>
+                <button class="btn btn-secondary" id="join-room" type="button">Join</button>
+                <button class="btn btn-danger" id="leave-room" type="button">Leave</button>
+            </div>
+        </section>
+
+        <details class="panel settings-panel">
+            <summary>
+                <span>Settings &amp; diagnostics</span>
+                <span class="summary-hint">Server and media scan</span>
+            </summary>
+            <div class="settings-content">
+                <label class="field-label" for="server-address">Server address</label>
+                <input type="text" id="server-address" minlength="1" value="http://127.0.0.1:3000" spellcheck="false">
+                <p class="field-help">Changes are saved automatically.</p>
+                <button class="btn btn-secondary diagnostic-action" id="recheck-video" type="button">Recheck media on this page</button>
+            </div>
+        </details>
+    </main>
 </body>
 
 </html>

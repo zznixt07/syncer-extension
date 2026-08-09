@@ -258,14 +258,13 @@ wc-toast-content {
 		return !!result?.found
 	}
 
-	listRoomsBtn.addEventListener('click', async (e) => {
-		const target = e.currentTarget
+	const loadRooms = async (target = listRoomsBtn) => {
 		setIsLoading(target, true)
 		try {
 			const result = await sendMessageToBG('list_rooms')
 			if (result?.success) {
 				const dataList = document.getElementById('room-suggestions')
-				const roomList = document.querySelector('pre#rooms-list')
+				const roomList = document.getElementById('rooms-list')
 				dataList.innerHTML = ''
 				roomList.textContent = ''
 				const rooms = result.data.roomUserCounts || result.data.rooms.map((roomName) => ({
@@ -273,7 +272,10 @@ wc-toast-content {
 					userCount: null,
 				}))
 				if (rooms.length === 0) {
-					roomList.textContent += 'No rooms found'
+					const emptyState = document.createElement('p')
+					emptyState.className = 'empty-state'
+					emptyState.textContent = 'No rooms yet. Create the first one below.'
+					roomList.appendChild(emptyState)
 				}
 				rooms.forEach((room) => {
 					const roomName = room.roomName
@@ -284,17 +286,14 @@ wc-toast-content {
 					// roomList.textContent += room + '\n'
 
 					const wrapper = document.createElement('div')
-					wrapper.style.display = 'flex'
-					wrapper.style.alignItems = 'center'
-					wrapper.style.marginBottom = '4px'
+					wrapper.className = 'room-row'
 
 					const roomNameSpan = document.createElement('span')
-					roomNameSpan.style.flexGrow = '1'
+					roomNameSpan.className = 'room-row-name'
 
 					// The room we're already in gets Leave instead of Join.
 					const actionBtn = document.createElement('button')
-					actionBtn.className = 'btn'
-					actionBtn.style.marginLeft = '8px'
+					actionBtn.className = 'btn room-row-action'
 
 					// Repaints just this row — no refetch of the whole list.
 					const paintRow = (userCount) => {
@@ -344,7 +343,8 @@ wc-toast-content {
 		} finally {
 			setIsLoading(target, false)
 		}
-	})
+	}
+	listRoomsBtn.addEventListener('click', (e) => loadRooms(e.currentTarget))
 	createRoomBtn.addEventListener('click', async (e) => {
 		const target = e.currentTarget
 		target.disabled = true
@@ -500,4 +500,5 @@ wc-toast-content {
 		updateRoomUserCount(roomStatus.roomName, roomStatus.userCount)
 	}
 	renderHostMedia(await sendMessageToBG('get_host_media', { tabId: tab?.id }))
+	await loadRooms()
 }
