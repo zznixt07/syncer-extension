@@ -15,6 +15,7 @@ test('extension popup overrides shared light styles with visible dark controls',
 	assert.match(css, /body\s*{[^}]*background-color:\s*black;/s)
 	assert.match(css, /\.pushable\s*{[^}]*background:\s*#111;/s)
 	assert.doesNotMatch(css, /\.pushable\s*{[^}]*background:\s*transparent;/s)
+	assert.doesNotMatch(css, /\.flex\s*{[^}]*justify-content:\s*center;/s)
 	assert.match(html, /<input[^>]*list="room-suggestions"/)
 	assert.match(html, /<datalist id="room-suggestions">/)
 	assert.doesNotMatch(html, /<datalist id="rooms">/)
