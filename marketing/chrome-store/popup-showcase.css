@@ -1,0 +1,5 @@
+html,
+body { min-height: 100%; overflow: hidden; }
+.showcase-active { border-color: #514984; background: #151329; }
+.showcase-active .room-row-name { color: #f0edff; font-weight: 700; }
+.showcase-status { color: #9ea8bc; font-size: 11px; }

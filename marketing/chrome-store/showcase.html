@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Syncer showcase</title>
+    <link rel="stylesheet" href="showcase.css">
+</head>
+<body>
+    <main class="stage">
+        <section class="message">
+            <div class="brand"><span class="brand-mark">S</span><span>Syncer</span></div>
+            <p class="kicker" id="kicker"></p>
+            <h1 id="headline"></h1>
+            <p class="description" id="description"></p>
+            <div class="feature-row" id="features"></div>
+        </section>
+
+        <section class="browser-scene" aria-label="Syncer extension preview">
+            <div class="browser-bar">
+                <div class="traffic"><span></span><span></span><span></span></div>
+                <div class="address">media.example/watch</div>
+                <div class="extension-chip"><span>S</span> Syncer</div>
+            </div>
+            <div class="media-page">
+                <div class="video-card">
+                    <div class="video-art"><span class="play-symbol">▶</span></div>
+                    <div class="video-meta"><span></span><span></span></div>
+                </div>
+                <iframe id="popup-frame" title="Syncer popup showcase"></iframe>
+            </div>
+        </section>
+    </main>
+    <script src="showcase.js"></script>
+</body>
+</html>
