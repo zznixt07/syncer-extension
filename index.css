@@ -9,6 +9,11 @@ html {
 
 body {
     overflow-x: hidden;
+    width: 380px;
+    min-width: 380px;
+    max-width: 380px;
+    background-color: black;
+    color: white;
     /* padding: 1rem; */
 }
 
@@ -92,12 +97,14 @@ input {
 .pushable {
     position: relative;
     border: none;
-    background: transparent;
+    background: #111;
+    color: white;
+    outline: #9E9E9E 1px solid;
     padding: 8px; /* Added padding instead of outline */
     cursor: pointer;
     /* outline-offset: 4px; */ /* Removed outline */
     transition: filter 250ms;
-    font-size: 0.6rem;
+    font-size: 0.8rem;
 }
 
 .shadow {
