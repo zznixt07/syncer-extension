@@ -554,7 +554,7 @@ const listenToMediaEvents = () => {
 	if (!_snapshotTimer) {
 		_snapshotTimer = setInterval(() => {
 			if (IS_OWNER && currRoom) sendMediaEvent()
-		}, 5000)
+		}, 60_000)
 	}
 	if (isSpotifyClient()) {
 		return listenToSpotifyAudioEvents()

@@ -588,7 +588,7 @@ var listenToMediaEvents = () => {
   if (!_snapshotTimer) {
     _snapshotTimer = setInterval(() => {
       if (IS_OWNER && currRoom) sendMediaEvent();
-    }, 5e3);
+    }, 6e4);
   }
   if (isSpotifyClient()) {
     return listenToSpotifyAudioEvents();

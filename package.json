@@ -16,6 +16,6 @@
   },
   "dependencies": {
     "socket.io-client": "4.8.3",
-    "syncer-extension-core": "github:zznixt07/syncer-extension-core#b2651f4381fb8d881ab56c4e42d8e6db9505a28f"
+    "syncer-extension-core": "github:zznixt07/syncer-extension-core#3a19d5f6bbd1d4a28a490e220de57fbf2a267d17"
   }
 }
