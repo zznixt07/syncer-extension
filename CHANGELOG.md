@@ -7,6 +7,11 @@ history for those.
 
 ### Fixed
 
+- A guest that reloads its page resumes at the host's position instead of
+  sitting paused until the host's next action: the reloaded tab asks the host
+  for a snapshot, and playback events arriving mid-reload are held and replayed
+  rather than sent to a frame that no longer exists.
+- A reloaded tab gets its user-count badge back.
 - Leaving a room from the popup's room list no longer wipes the room name you
   had just typed into the input.
 

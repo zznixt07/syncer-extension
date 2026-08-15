@@ -1,4 +1,4 @@
-import { createRoom, expect, hostPlay, joinRoom, test, videoState } from './harness.js'
+import { createRoom, expect, hostPause, hostPlay, joinRoom, test, videoState } from './harness.js'
 
 let roomCounter = 0
 const uniqueRoom = () => `e2e-nav-${process.pid}-${roomCounter++}`
@@ -10,6 +10,24 @@ const twoInARoom = async (newClient, room) => {
 	await joinRoom(guest, room)
 	return { host, guest }
 }
+
+test('a guest navigates to the host when joining an existing room', async ({ newClient, fixtureServer }) => {
+	const room = uniqueRoom()
+	const host = await newClient('host')
+	await host.page.goto(`${fixtureServer.origin}/player2.html`)
+	await host.page.waitForFunction(() => document.querySelector('video')?.readyState >= 2)
+	await createRoom(host, room)
+
+	const guest = await newClient('guest')
+	await joinRoom(guest, room)
+
+	await expect
+		.poll(async () => guest.page.url(), {
+			message: 'guest should navigate to the host page immediately after joining',
+			timeout: 30_000,
+		})
+		.toContain('player2.html')
+})
 
 /*
 The host moving to the next episode. Detection lives in background.js because a
@@ -75,6 +93,52 @@ test('a guest follows an SPA navigation without waiting for play', async ({
 			timeout: 30_000,
 		})
 		.toContain('player2.html')
+})
+
+/*
+The socket lives in the background worker, so a guest reloading its own page
+never leaves the room — the server still counts it in. What the reload does
+destroy is the page's playback state, and nothing on the server side knows to
+resend it. Without an explicit snapshot request the guest sits paused at zero
+until the host happens to touch the video, or until the host's 60s corrective
+snapshot. That is the wait this test refuses to accept.
+*/
+test('a guest that reloads its own page comes back in sync', async ({ newClient }) => {
+	const { host, guest } = await twoInARoom(newClient, uniqueRoom())
+
+	await hostPlay(host)
+	await expect.poll(async () => (await videoState(guest.page)).paused).toBe(false)
+
+	await guest.page.reload()
+	await guest.page.waitForFunction(() => document.querySelector('video')?.readyState >= 2)
+
+	// No host action in between: the guest has to ask for the state itself.
+	await expect
+		.poll(async () => (await videoState(guest.page)).paused, {
+			message: 'a reloaded guest should resume without the host touching anything',
+			timeout: 30_000,
+		})
+		.toBe(false)
+
+	// Resuming at zero would be "playing" but not "in sync".
+	await expect
+		.poll(async () => {
+			const [h, g] = [await videoState(host.page), await videoState(guest.page)]
+			return Math.abs(h.currentTime - g.currentTime)
+		}, {
+			message: 'the reloaded guest should land near the host position',
+			timeout: 30_000,
+		})
+		.toBeLessThan(2)
+
+	// And the tab has to be a live member again, not just correct once.
+	await hostPause(host)
+	await expect
+		.poll(async () => (await videoState(guest.page)).paused, {
+			message: 'sync should still work after the reload',
+			timeout: 30_000,
+		})
+		.toBe(true)
 })
 
 test('the room is not dragged onto a page with no video', async ({ newClient, fixtureServer }) => {

@@ -353,7 +353,12 @@ const updateHostMedia = async (tabId, event) => {
 }
 
 let LISTEN_EVTS_CALLED = 0
-const listenToEvents = (tabId, frameId) => {
+/*
+frameId is not captured here on purpose. A reload replaces every frame in the
+tab, so an id captured at bind time is dead by the time the next event arrives.
+The routing layer reads videoFrameMap at send time instead.
+*/
+const listenToEvents = (tabId) => {
     log('Number of times listenEvents() was called:', LISTEN_EVTS_CALLED++)
 
     // Remove previous socket event listeners so they don't stack
@@ -361,25 +366,61 @@ const listenToEvents = (tabId, frameId) => {
     SOCKET.removeAllListeners('sync_room_data')
     SOCKET.removeAllListeners('stream_change')
 
-    const opts = frameId != null ? { frameId } : {}
-
     SOCKET.on('media_event', (result) => {
         log('media event')
-		updateHostMedia(tabId, result).catch(() => {})
-        chrome.tabs.sendMessage(tabId, { type: 'media_event', data: result }, opts)
+        queueOrRouteRoomEvent(tabId, 'media_event', result)
     })
     SOCKET.on('sync_room_data', (result) => {
-        chrome.tabs.sendMessage(tabId, { type: 'sync_room_data', data: result }, opts)
+        queueOrRouteRoomEvent(tabId, 'sync_room_data', result)
     })
     SOCKET.on('stream_change', (result) => {
-		updateHostMedia(tabId, result).catch(() => {})
-        chrome.tabs.sendMessage(tabId, { type: 'stream_change', data: result }, opts)
+        queueOrRouteRoomEvent(tabId, 'stream_change', result)
     })
 }
 
 // Track active room sessions per tab so we can re-route when a video frame registers later
 // Map<tabId, { roomName, isOwner }>
 const activeTabSessions = new Map()
+
+// The server replays a room snapshot immediately after join_room is
+// acknowledged. The socket handlers have to be attached before that request,
+// but the receiving content frame is not configured until the acknowledgement
+// has been processed. Keep that small gap lossless.
+// Map<tabId, Array<{ type: string, data: unknown }>>
+const pendingRoomEvents = new Map()
+
+// A page that takes its time loading must not grow this without bound; the
+// newest events are the ones worth replaying anyway.
+const MAX_PENDING_ROOM_EVENTS = 10
+
+const routeRoomEvent = (tabId, type, data) => {
+    if (type === 'media_event' || type === 'stream_change') {
+        updateHostMedia(tabId, data).catch(() => {})
+    }
+    // Resolved now, not when the listener was bound: a reload swaps the frame.
+    const frameId = videoFrameMap.get(tabId)
+    const opts = frameId != null ? { frameId } : {}
+    chrome.tabs.sendMessage(tabId, { type, data }, opts).catch(() => {})
+}
+
+const queueOrRouteRoomEvent = (tabId, type, data) => {
+    // Two gaps to cover: before the join is acknowledged (no session yet) and
+    // while a reload is in flight (session kept, but every frame is gone).
+    // Sending into either one is a silent drop, so hold the event instead.
+    if (activeTabSessions.has(tabId) && videoFrameMap.has(tabId)) {
+        routeRoomEvent(tabId, type, data)
+        return
+    }
+    const events = pendingRoomEvents.get(tabId) || []
+    events.push({ type, data })
+    pendingRoomEvents.set(tabId, events.slice(-MAX_PENDING_ROOM_EVENTS))
+}
+
+const flushRoomEvents = (tabId) => {
+    const events = pendingRoomEvents.get(tabId)
+    pendingRoomEvents.delete(tabId)
+    events?.forEach(({ type, data }) => routeRoomEvent(tabId, type, data))
+}
 
 /*
 MV3 terminates the service worker when it goes idle, taking SOCKET and every
@@ -403,12 +444,31 @@ const setSession = (tabId, session) => {
 const deleteSession = (tabId) => {
     forgetNavigation(tabId)
 	clearHostMedia(tabId).catch(() => {})
+	pendingRoomEvents.delete(tabId)
+	lastSnapshotRequest.delete(tabId)
     if (!activeTabSessions.delete(tabId)) return Promise.resolve()
     return persistSessions()
 }
 
 // Map<tabId, frameId> — which frame owns the video
 const videoFrameMap = new Map()
+
+/*
+The probe injects into every frame and retries, so one page load can produce
+several register_video_frame messages. Asking the host for a snapshot is cheap
+but not free — it makes the host broadcast to the whole room — so rate-limit it.
+*/
+// Map<tabId, timestamp>
+const lastSnapshotRequest = new Map()
+const SNAPSHOT_REQUEST_THROTTLE_MS = 5000
+
+const shouldRequestSnapshot = (tabId) => {
+    const now = Date.now()
+    const last = lastSnapshotRequest.get(tabId)
+    if (last != null && now - last < SNAPSHOT_REQUEST_THROTTLE_MS) return false
+    lastSnapshotRequest.set(tabId, now)
+    return true
+}
 
 /*
 --- Following the host to the next episode ---
@@ -506,7 +566,7 @@ const resumeSessions = async () => {
                 continue
             }
             session.isOwner = !!res.data?.isOwner
-            listenToEvents(tabId, videoFrameMap.get(tabId))
+            listenToEvents(tabId)
             applyUserCount(session.roomName, res.data?.userCount)
             try {
                 await chrome.tabs.sendMessage(
@@ -560,11 +620,18 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
         // (the rejoined page needs it to re-route listeners)
     }
 
-    if (!activeTabSessions.has(tabId)) return
+    const session = activeTabSessions.get(tabId)
+    if (!session) return
 
     // A load replaced every frame, so the video frame has to announce itself
     // again before anything can be routed to it.
-    if (changeInfo.status === 'complete') waitForVideoFrame(tabId)
+    if (changeInfo.status === 'complete') {
+        waitForVideoFrame(tabId)
+        // Chrome clears tab-scoped action state on navigation, so a reloaded
+        // tab silently loses its user count and keeps a stale title.
+        updateBadgeForRoom(session.roomName)
+        chrome.action.setTitle({ tabId, title: 'Syncer' }).catch(() => {})
+    }
 
     // changeInfo.url covers SPA history navigation, which never reports a
     // status at all; 'complete' covers a real load.
@@ -756,6 +823,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             const tabId = sender.tab?.id
             const frameId = sender.frameId
             if (tabId != null && frameId != null) {
+                const isNewFrame = videoFrameMap.get(tabId) !== frameId
                 videoFrameMap.set(tabId, frameId)
                 log(`Registered video frame: tab=${tabId}, frame=${frameId}`)
 
@@ -763,7 +831,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                 // to the newly registered video frame and set it up
                 const session = activeTabSessions.get(tabId)
                 if (session && SOCKET?.connected) {
-                    listenToEvents(tabId, frameId)
+                    listenToEvents(tabId)
                     try {
                         await chrome.tabs.sendMessage(
                             tabId,
@@ -775,6 +843,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                             { frameId }
                         )
                     } catch (_) { /* frame may not be ready */ }
+                    // Only now: setup_after_join resets the sequence gate, so
+                    // anything replayed before it would be rejected as stale.
+                    flushRoomEvents(tabId)
+                    /*
+                    A reload leaves the socket — and therefore the room — intact,
+                    but the new page starts paused at zero and nobody has told it
+                    otherwise. Without this the guest waits for the host's next
+                    play/pause, or for the host's 60s corrective snapshot.
+                    */
+                    if (isNewFrame && !session.isOwner && shouldRequestSnapshot(tabId)) {
+                        requestEventFromOwner({ roomName: session.roomName })
+                    }
                 }
             }
             sendResponse({ success: true })
@@ -847,8 +927,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         // --- Socket-dependent commands (direct from content script) ---
         } else {
             let resp
-            if (!SOCKET) {
-                resp = await connectToWebSocket()
+            const configuredAddress = await getServerAddress()
+            if (!configuredAddress) {
+                resp = { success: false, data: { message: 'no stored address' } }
+            } else if (!SOCKET || _lastAttemptedAddress !== configuredAddress) {
+                // Saving a new address is debounced for typing, but a room
+                // command must never use a socket that still points at the old
+                // server while that debounce is pending.
+                resp = await connectImmediate(configuredAddress)
             } else if (!SOCKET.connected) {
                 const reconnected = await waitForConnection()
                 if (!reconnected) {
@@ -883,20 +969,34 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                     const tabId = sender.tab.id
 					await clearHostMedia(tabId)
                     const frameId = videoFrameMap.get(tabId) ?? sender.frameId
+                    // Routing reads videoFrameMap, so the creating frame has to
+                    // be in it even when the probe never ran for this tab.
+                    if (frameId != null) videoFrameMap.set(tabId, frameId)
                     // Track the session so the owner also gets a badge and a
                     // restorable popup, same as join_room does.
                     await setSession(tabId, {
                         roomName: message.data.roomName,
                         isOwner: true,
                     })
-                    listenToEvents(tabId, frameId)
+                    listenToEvents(tabId)
                     applyUserCount(message.data.roomName, res.data?.userCount)
                 }
                 sendResponse(res)
             } else if (message.type === 'join_room') {
+                const tabId = message.data?.tabId ?? sender.tab?.id
+                const frameId = tabId != null ? videoFrameMap.get(tabId) : undefined
+
+                // The server acknowledges a join and then immediately replays
+                // the latest stream/playback snapshot. Install the per-tab
+                // handlers before emitting join_room so that first stream_change
+                // cannot arrive in the gap after the acknowledgement.
+                if (tabId != null) {
+                    pendingRoomEvents.delete(tabId)
+                    listenToEvents(tabId)
+                }
+
                 const res = await joinRoom(message.data)
                 if (res.success) {
-                    const tabId = message.data?.tabId ?? sender.tab?.id
                     if (tabId != null) {
 						await clearHostMedia(tabId)
                         // Track the active session
@@ -904,9 +1004,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                             roomName: message.data.roomName,
                             isOwner: res.data?.isOwner,
                         })
-
-                        const frameId = videoFrameMap.get(tabId)
-                        listenToEvents(tabId, frameId)
 
                         // Tell the video frame (if registered) to set up its state
                         if (frameId != null) {
@@ -922,8 +1019,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                                 )
                             } catch (_) { /* frame may not be ready yet */ }
                         }
+
+                    }
+                    // Replay events received between join_room and
+                    // setup_after_join are now safe to apply in order.
+                    if (tabId != null) {
+                        flushRoomEvents(tabId)
                     }
                     applyUserCount(message.data.roomName, res.data?.userCount)
+                } else if (tabId != null) {
+                    pendingRoomEvents.delete(tabId)
                 }
                 sendResponse(res)
             } else if (message.type === 'list_rooms') {
