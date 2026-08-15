@@ -319,8 +319,11 @@ wc-toast-content {
 					paintRow(room.userCount)
 
 					actionBtn.addEventListener('click', async () => {
-						document.getElementById('new-room-name').value = roomName
 						const leaving = roomName === activeRoomName
+						// Joining moves the input to the room we're entering. Leaving
+						// must not: the user often types a new room name first and is
+						// told to leave the current one before it will let them in.
+						if (!leaving) document.getElementById('new-room-name').value = roomName
 						setIsLoading(actionBtn, true)
 						let result
 						try {
@@ -424,7 +427,8 @@ wc-toast-content {
 		const target = e.currentTarget
 		setIsLoading(target, true)
 		try {
-			await doLeaveRoom(document.getElementById('new-room-name').value)
+			// Leave the room we're actually in, not whatever new name was typed.
+			await doLeaveRoom(activeRoomName ?? document.getElementById('new-room-name').value)
 		} finally {
 			setIsLoading(target, false)
 		}
@@ -452,6 +456,9 @@ wc-toast-content {
 	} else if (!errorOnAddress) {
 		await updateServerAddress(serverAddressInput.value)
 	}
+	// The popup can appear before its asynchronous settings read completes. Mark
+	// this point so callers do not race a later default server-address write.
+	document.documentElement.dataset.syncerReady = 'true'
 
 	recheckBtn?.addEventListener('click', async (e) => {
 		const target = e.currentTarget

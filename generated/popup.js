@@ -903,8 +903,8 @@ wc-toast-content {
           };
           paintRow(room.userCount);
           actionBtn.addEventListener("click", async () => {
-            document.getElementById("new-room-name").value = roomName;
             const leaving = roomName === activeRoomName;
+            if (!leaving) document.getElementById("new-room-name").value = roomName;
             setIsLoading(actionBtn, true);
             let result2;
             try {
@@ -992,7 +992,7 @@ wc-toast-content {
     const target = e.currentTarget;
     setIsLoading(target, true);
     try {
-      await doLeaveRoom(document.getElementById("new-room-name").value);
+      await doLeaveRoom(activeRoomName ?? document.getElementById("new-room-name").value);
     } finally {
       setIsLoading(target, false);
     }
@@ -1018,6 +1018,7 @@ wc-toast-content {
   } else if (!errorOnAddress) {
     await updateServerAddress(serverAddressInput.value);
   }
+  document.documentElement.dataset.syncerReady = "true";
   recheckBtn?.addEventListener("click", async (e) => {
     const target = e.currentTarget;
     setIsLoading(target, true);

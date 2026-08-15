@@ -3,6 +3,13 @@
 Notable changes to Syncer. Versions before 1.2.0 predate this file; see the git
 history for those.
 
+## 1.2.3 - 2026-08-11
+
+### Fixed
+
+- Leaving a room from the popup's room list no longer wipes the room name you
+  had just typed into the input.
+
 ## 1.2.1 — 2026-08-08
 
 ### Added
