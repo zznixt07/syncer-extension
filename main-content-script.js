@@ -442,11 +442,22 @@ const onMediaEvent = async (result) => {
 	}
 }
 
+// Up to ~8s can pass before these fire, which is long enough to leave a room
+// first. Tracked so leaving cancels them instead of letting them fire into it.
+const _delayedMediaEvents = new Set()
+
 const sendMediaEventAfterDelay = (delayMs) => {
-	setTimeout(() => {
+	const id = setTimeout(() => {
+		_delayedMediaEvents.delete(id)
 		log('delay complete .sending now')
 		sendMediaEvent()
 	}, delayMs)
+	_delayedMediaEvents.add(id)
+}
+
+const cancelDelayedMediaEvents = () => {
+	_delayedMediaEvents.forEach(clearTimeout)
+	_delayedMediaEvents.clear()
 }
 
 const onSyncRoomEvent = () => {
@@ -505,7 +516,11 @@ const onStreamChangeEvent = async (resp) => {
 // 	ack({success: true, data: {url: window.location.href}})
 // })
 
+// Nothing may go on the wire without a room to send it to. A stray listener or
+// a timer that outlived a leave used to send roomName: null, which the server
+// then had to survive.
 const sendStreamChangeEvent = async (...args) => {
+	if (!currRoom) return
 	sendMessageToBG({
 		type: 'stream_change',
 		data: {
@@ -516,6 +531,7 @@ const sendStreamChangeEvent = async (...args) => {
 }
 
 const sendMediaEvent = async (...args) => {
+	if (!currRoom) return
 	await sendMessageToBG({
 		type: 'media_event',
 		data: {
@@ -571,21 +587,40 @@ const listenToMediaEvents = () => {
 	VID_ELEM.addEventListener('playing', sendPlayEvent)
 }
 
+/*
+Spotify has no <video>, so removeVideoEvents has nothing to unbind and this
+listener used to outlive the room: an anonymous closure on a player emitter that
+nothing held a reference to. After leaving, it kept broadcasting with a null
+room name — which is what crashed the server. Named, tracked, and attached once.
+*/
+let _spotifyEmitter = null
+const onSpotifyUpdate = async (e) => {
+	const data = e.data
+	if (!data) return
+	sendMediaEvent(data)
+	if (data.item.uri !== CURR_SONG_URI_OWNERPOV) {
+		CURR_SONG_URI_OWNERPOV = data.item.uri
+		await sendStreamChangeEvent()
+		sendMediaEventAfterDelay(3100)
+		sendMediaEventAfterDelay(4500)
+		sendMediaEventAfterDelay(5200)
+		sendMediaEventAfterDelay(5990)
+	}
+}
+
 const listenToSpotifyAudioEvents = () => {
+	// listenToMediaEvents runs on create, join, setup_after_join and every
+	// rescan; without this each one stacked another emitter.
+	if (_spotifyEmitter) return
 	const spotifyPlayer = getPlayerAPIFn()
-	spotifyPlayer._events._emitter.addListener('update', async (e) => {
-		const data = e.data
-		if (!data) return
-		sendMediaEvent(data)
-		if (data.item.uri !== CURR_SONG_URI_OWNERPOV) {
-			CURR_SONG_URI_OWNERPOV = data.item.uri
-			await sendStreamChangeEvent()
-			sendMediaEventAfterDelay(3100)
-			sendMediaEventAfterDelay(4500)
-			sendMediaEventAfterDelay(5200)
-			sendMediaEventAfterDelay(5990)
-		}
-	})
+	_spotifyEmitter = spotifyPlayer._events._emitter
+	_spotifyEmitter.addListener('update', onSpotifyUpdate)
+}
+
+const stopListeningToSpotifyAudioEvents = () => {
+	if (!_spotifyEmitter) return
+	_spotifyEmitter.removeListener('update', onSpotifyUpdate)
+	_spotifyEmitter = null
 }
 
 const removeVideoEvents = () => {
@@ -593,6 +628,9 @@ const removeVideoEvents = () => {
 		clearInterval(_snapshotTimer)
 		_snapshotTimer = null
 	}
+	stopListeningToSpotifyAudioEvents()
+	cancelDelayedMediaEvents()
+	// Everything below is <video>-specific; Spotify never gets this far.
 	if (!VID_ELEM) return
 	VID_ELEM.removeEventListener('play', sendPlayEvent)
 	VID_ELEM.removeEventListener('pause', sendPauseEvent)
@@ -697,11 +735,10 @@ const leaveRoom = async (roomName) => {
 			data: { key: CURR_ROOM_ID, value: null },
 		})
 		await sendMessageToBG({ type: 'remove_all_listeners' })
-		if (result.data.isOwner) {
-			removeVideoEvents()
-		} else {
-			// joineeVideoUnListenEvents()
-		}
+		// Unconditional: a guest has no media listeners to remove, but it can
+		// still be holding a Spotify emitter or a delayed send from when it was
+		// the owner, and those would fire into a room we have just left.
+		removeVideoEvents()
 		IS_OWNER = false
 		stopAutoVideoScan()
 	}
@@ -741,9 +778,7 @@ window.addEventListener('message', async (event) => {
 
     if (message.type === 'cleanup_after_leave') {
         currRoom = null
-        if (message.isOwner) {
-            removeVideoEvents()
-        }
+        removeVideoEvents()
         IS_OWNER = false
         stopAutoVideoScan()
         return port.postMessage({ success: true })

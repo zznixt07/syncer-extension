@@ -12,6 +12,9 @@ history for those.
   for a snapshot, and playback events arriving mid-reload are held and replayed
   rather than sent to a frame that no longer exists.
 - A reloaded tab gets its user-count badge back.
+- Leaving a room on Spotify now actually stops the broadcast. The player
+  listener outlived the room (and stacked another copy on every join), so a
+  left room kept sending playback updates with no room attached.
 - Leaving a room from the popup's room list no longer wipes the room name you
   had just typed into the input.
 

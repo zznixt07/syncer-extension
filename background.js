@@ -234,6 +234,17 @@ const waitForConnection = () => {
 
 const socket_emit = async (eventName, data) => {
 	return await new Promise((resolve) => {
+		// Last line of defence before the wire. A room name that is missing or
+		// not a string means some caller lost track of its room; sending it
+		// only pushes the problem onto the server.
+		if (data && 'roomName' in data && typeof data.roomName !== 'string') {
+			log(`Refusing to emit ${eventName} with a non-string room name`, data.roomName)
+			resolve({
+				success: false,
+				data: { message: 'No room to send to.' },
+			})
+			return
+		}
 		if (!SOCKET || !SOCKET.connected) {
 			resolve({
 				success: false,
@@ -1042,16 +1053,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                     if (tabId != null) {
                         await deleteSession(tabId)
                         setBadge(tabId, '')
+                        // Spotify never registers a video frame — it has no
+                        // <video> — so addressing this to one would mean the
+                        // page is never told the room ended and keeps
+                        // broadcasting. Fall back to the whole tab.
                         const frameId = videoFrameMap.get(tabId)
-                        if (frameId != null) {
-                            try {
-                                await chrome.tabs.sendMessage(
-                                    tabId,
-                                    { type: 'cleanup_after_leave', isOwner: res.data?.isOwner },
-                                    { frameId }
-                                )
-                            } catch (_) { /* frame may be gone */ }
-                        }
+                        try {
+                            await chrome.tabs.sendMessage(
+                                tabId,
+                                { type: 'cleanup_after_leave', isOwner: res.data?.isOwner },
+                                frameId != null ? { frameId } : {}
+                            )
+                        } catch (_) { /* frame may be gone */ }
                     }
                     // Another tab may still hold this room on the shared socket;
                     // only forget the count once nobody local is left in it.

@@ -3599,6 +3599,14 @@ var waitForConnection = () => {
 };
 var socket_emit = async (eventName, data) => {
   return await new Promise((resolve) => {
+    if (data && "roomName" in data && typeof data.roomName !== "string") {
+      log(`Refusing to emit ${eventName} with a non-string room name`, data.roomName);
+      resolve({
+        success: false,
+        data: { message: "No room to send to." }
+      });
+      return;
+    }
     if (!SOCKET || !SOCKET.connected) {
       resolve({
         success: false,
@@ -4196,15 +4204,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             await deleteSession(tabId);
             setBadge(tabId, "");
             const frameId = videoFrameMap.get(tabId);
-            if (frameId != null) {
-              try {
-                await chrome.tabs.sendMessage(
-                  tabId,
-                  { type: "cleanup_after_leave", isOwner: res.data?.isOwner },
-                  { frameId }
-                );
-              } catch (_) {
-              }
+            try {
+              await chrome.tabs.sendMessage(
+                tabId,
+                { type: "cleanup_after_leave", isOwner: res.data?.isOwner },
+                frameId != null ? { frameId } : {}
+              );
+            } catch (_) {
             }
           }
           const stillJoined = [...activeTabSessions.values()].some(

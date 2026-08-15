@@ -509,11 +509,18 @@ var onMediaEvent = async (result) => {
     await sendLogToBG("no video element found to act on media event");
   }
 };
+var _delayedMediaEvents = /* @__PURE__ */ new Set();
 var sendMediaEventAfterDelay = (delayMs) => {
-  setTimeout(() => {
+  const id = setTimeout(() => {
+    _delayedMediaEvents.delete(id);
     log("delay complete .sending now");
     sendMediaEvent();
   }, delayMs);
+  _delayedMediaEvents.add(id);
+};
+var cancelDelayedMediaEvents = () => {
+  _delayedMediaEvents.forEach(clearTimeout);
+  _delayedMediaEvents.clear();
 };
 var onSyncRoomEvent = () => {
   sendStreamChangeEvent();
@@ -549,6 +556,7 @@ var onStreamChangeEvent = async (resp) => {
   }
 };
 var sendStreamChangeEvent = async (...args) => {
+  if (!currRoom) return;
   sendMessageToBG({
     type: "stream_change",
     data: {
@@ -558,6 +566,7 @@ var sendStreamChangeEvent = async (...args) => {
   });
 };
 var sendMediaEvent = async (...args) => {
+  if (!currRoom) return;
   await sendMessageToBG({
     type: "media_event",
     data: {
@@ -601,27 +610,38 @@ var listenToMediaEvents = () => {
   VID_ELEM.addEventListener("waiting", sendStallEvent);
   VID_ELEM.addEventListener("playing", sendPlayEvent);
 };
+var _spotifyEmitter = null;
+var onSpotifyUpdate = async (e) => {
+  const data = e.data;
+  if (!data) return;
+  sendMediaEvent(data);
+  if (data.item.uri !== CURR_SONG_URI_OWNERPOV) {
+    CURR_SONG_URI_OWNERPOV = data.item.uri;
+    await sendStreamChangeEvent();
+    sendMediaEventAfterDelay(3100);
+    sendMediaEventAfterDelay(4500);
+    sendMediaEventAfterDelay(5200);
+    sendMediaEventAfterDelay(5990);
+  }
+};
 var listenToSpotifyAudioEvents = () => {
+  if (_spotifyEmitter) return;
   const spotifyPlayer = getPlayerAPIFn();
-  spotifyPlayer._events._emitter.addListener("update", async (e) => {
-    const data = e.data;
-    if (!data) return;
-    sendMediaEvent(data);
-    if (data.item.uri !== CURR_SONG_URI_OWNERPOV) {
-      CURR_SONG_URI_OWNERPOV = data.item.uri;
-      await sendStreamChangeEvent();
-      sendMediaEventAfterDelay(3100);
-      sendMediaEventAfterDelay(4500);
-      sendMediaEventAfterDelay(5200);
-      sendMediaEventAfterDelay(5990);
-    }
-  });
+  _spotifyEmitter = spotifyPlayer._events._emitter;
+  _spotifyEmitter.addListener("update", onSpotifyUpdate);
+};
+var stopListeningToSpotifyAudioEvents = () => {
+  if (!_spotifyEmitter) return;
+  _spotifyEmitter.removeListener("update", onSpotifyUpdate);
+  _spotifyEmitter = null;
 };
 var removeVideoEvents = () => {
   if (_snapshotTimer) {
     clearInterval(_snapshotTimer);
     _snapshotTimer = null;
   }
+  stopListeningToSpotifyAudioEvents();
+  cancelDelayedMediaEvents();
   if (!VID_ELEM) return;
   VID_ELEM.removeEventListener("play", sendPlayEvent);
   VID_ELEM.removeEventListener("pause", sendPauseEvent);
@@ -682,10 +702,7 @@ var leaveRoom = async (roomName) => {
       data: { key: CURR_ROOM_ID, value: null }
     });
     await sendMessageToBG({ type: "remove_all_listeners" });
-    if (result.data.isOwner) {
-      removeVideoEvents();
-    } else {
-    }
+    removeVideoEvents();
     IS_OWNER = false;
     stopAutoVideoScan();
   }
@@ -710,9 +727,7 @@ window.addEventListener("message", async (event) => {
   }
   if (message.type === "cleanup_after_leave") {
     currRoom = null;
-    if (message.isOwner) {
-      removeVideoEvents();
-    }
+    removeVideoEvents();
     IS_OWNER = false;
     stopAutoVideoScan();
     return port.postMessage({ success: true });
