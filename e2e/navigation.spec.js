@@ -155,3 +155,70 @@ test('the room is not dragged onto a page with no video', async ({ newClient, fi
 	await guest.page.waitForTimeout(8000)
 	expect(guest.page.url(), 'guest should not have moved').toBe(before)
 })
+
+/*
+Creating a room is no longer tied to a page with a video: the New Tab page is
+off limits to extensions, and about:blank stands in for it here. The room
+starts empty and the tab hosts whatever video it opens next.
+*/
+test('a room created on a page with no video hosts the next video opened', async ({
+	newClient,
+	fixtureServer,
+}) => {
+	const room = uniqueRoom()
+	const host = await newClient('host')
+	await host.page.goto('about:blank')
+	await createRoom(host, room)
+
+	const guest = await newClient('guest')
+	await joinRoom(guest, room)
+
+	await host.page.goto(`${fixtureServer.origin}/player2.html`)
+	await host.page.waitForFunction(() => document.querySelector('video').readyState >= 2)
+
+	await expect
+		.poll(async () => guest.page.url(), {
+			message: 'guest should be pulled to the first video the host opens',
+			timeout: 30_000,
+		})
+		.toContain('player2.html')
+
+	await hostPlay(host)
+	await expect
+		.poll(async () => (await videoState(guest.page)).paused, {
+			message: 'the host should be broadcasting playback from the new page',
+			timeout: 30_000,
+		})
+		.toBe(false)
+})
+
+test('a guest joining from a page with no content script is taken to the host', async ({
+	newClient,
+	fixtureServer,
+}) => {
+	const room = uniqueRoom()
+	const host = await newClient('host')
+	await host.page.goto(`${fixtureServer.origin}/player2.html`)
+	await host.page.waitForFunction(() => document.querySelector('video')?.readyState >= 2)
+	await createRoom(host, room)
+
+	const guest = await newClient('guest')
+	await guest.page.goto('about:blank')
+	await joinRoom(guest, room)
+
+	await expect
+		.poll(async () => guest.page.url(), {
+			message: 'guest should be taken to the host page from about:blank',
+			timeout: 30_000,
+		})
+		.toContain('player2.html')
+	await guest.page.waitForFunction(() => document.querySelector('video')?.readyState >= 2)
+
+	await hostPlay(host)
+	await expect
+		.poll(async () => (await videoState(guest.page)).paused, {
+			message: 'guest should follow playback once it lands',
+			timeout: 30_000,
+		})
+		.toBe(false)
+})

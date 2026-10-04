@@ -3739,11 +3739,29 @@ var queueOrRouteRoomEvent = (tabId, type, data) => {
   const events = pendingRoomEvents.get(tabId) || [];
   events.push({ type, data });
   pendingRoomEvents.set(tabId, events.slice(-MAX_PENDING_ROOM_EVENTS));
+  if (type === "stream_change") followHostFromUnscriptableTab(tabId, data).catch(() => {
+  });
 };
 var flushRoomEvents = (tabId) => {
   const events = pendingRoomEvents.get(tabId);
   pendingRoomEvents.delete(tabId);
   events?.forEach(({ type, data }) => routeRoomEvent(tabId, type, data));
+};
+var isScriptableUrl = (url2) => /^https?:/.test(url2 || "");
+var followHostFromUnscriptableTab = async (tabId, event) => {
+  const session = activeTabSessions.get(tabId);
+  if (!session || session.isOwner) return;
+  const url2 = event?.data?.media?.url;
+  if (!isScriptableUrl(url2)) return;
+  let tab;
+  try {
+    tab = await chrome.tabs.get(tabId);
+  } catch (_) {
+    return;
+  }
+  if (tab.status === "loading" || isScriptableUrl(tab.url)) return;
+  lastBroadcastUrl.set(tabId, url2);
+  await chrome.tabs.update(tabId, { url: url2 });
 };
 var SESSIONS_KEY = `${EXT_ID}_active_sessions`;
 var persistSessions = () => {
@@ -3878,6 +3896,17 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   videoFrameMap.delete(tabId);
   deleteSession(tabId);
   setBadge(tabId, "");
+});
+chrome.tabs.onReplaced.addListener(async (addedTabId, removedTabId) => {
+  videoFrameMap.delete(removedTabId);
+  const session = activeTabSessions.get(removedTabId);
+  if (!session) return;
+  await deleteSession(removedTabId);
+  await setSession(addedTabId, session);
+  if (SOCKET?.connected) listenToEvents(addedTabId);
+  updateBadgeForRoom(session.roomName);
+  waitForVideoFrame(addedTabId);
+  scheduleStreamChange(addedTabId);
 });
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   if (changeInfo.status === "loading") {
@@ -4134,18 +4163,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       } else if (resp && !resp.success) {
         sendResponse(resp);
       } else if (message.type === "create_room") {
-        if (sender.tab?.id) {
-          const topUrl = await getTopFrameUrl(sender.tab.id);
+        const tabId = message.data?.tabId ?? sender.tab?.id;
+        if (tabId != null) {
+          const topUrl = await getTopFrameUrl(tabId);
           if (topUrl && message.data?.meta) {
             message.data.meta.url = topUrl;
             if (message.data.meta.media) message.data.meta.media.url = topUrl;
           }
         }
         const res = await createRoom(message.data);
-        if (res.success) {
-          const tabId = sender.tab.id;
+        if (res.success && tabId != null) {
           await clearHostMedia(tabId);
-          const frameId = videoFrameMap.get(tabId) ?? sender.frameId;
+          const frameId = videoFrameMap.get(tabId) ?? (sender.tab ? sender.frameId : void 0);
           if (frameId != null) videoFrameMap.set(tabId, frameId);
           await setSession(tabId, {
             roomName: message.data.roomName,
@@ -4186,7 +4215,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             }
           }
           if (tabId != null) {
-            flushRoomEvents(tabId);
+            const tabUrl = await getTopFrameUrl(tabId);
+            if (frameId == null && !isScriptableUrl(tabUrl)) {
+              const snapshot = pendingRoomEvents.get(tabId)?.findLast((e) => e.type === "stream_change");
+              if (snapshot) {
+                await followHostFromUnscriptableTab(tabId, snapshot.data).catch(() => {
+                });
+              }
+            } else {
+              flushRoomEvents(tabId);
+            }
           }
           applyUserCount(message.data.roomName, res.data?.userCount);
         } else if (tabId != null) {

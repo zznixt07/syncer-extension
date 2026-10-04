@@ -425,12 +425,40 @@ const queueOrRouteRoomEvent = (tabId, type, data) => {
     const events = pendingRoomEvents.get(tabId) || []
     events.push({ type, data })
     pendingRoomEvents.set(tabId, events.slice(-MAX_PENDING_ROOM_EVENTS))
+    if (type === 'stream_change') followHostFromUnscriptableTab(tabId, data).catch(() => {})
 }
 
 const flushRoomEvents = (tabId) => {
     const events = pendingRoomEvents.get(tabId)
     pendingRoomEvents.delete(tabId)
     events?.forEach(({ type, data }) => routeRoomEvent(tabId, type, data))
+}
+
+// Content scripts only run on web pages; Chrome keeps extensions out of pages
+// like the New Tab page, and a top-level about:blank never gets one either.
+const isScriptableUrl = (url) => /^https?:/.test(url || '')
+
+/*
+A guest on a page no content script runs in has nothing to act on
+stream_change, so follow the host from here. The events stay queued and replay
+once the new page's video frame registers.
+*/
+const followHostFromUnscriptableTab = async (tabId, event) => {
+    const session = activeTabSessions.get(tabId)
+    if (!session || session.isOwner) return
+    const url = event?.data?.media?.url
+    if (!isScriptableUrl(url)) return
+    let tab
+    try {
+        tab = await chrome.tabs.get(tabId)
+    } catch (_) {
+        return
+    }
+    // Already on its way somewhere: its frames will register and take the queue.
+    if (tab.status === 'loading' || isScriptableUrl(tab.url)) return
+    // We were sent here; don't broadcast it back if this tab later owns the room.
+    lastBroadcastUrl.set(tabId, url)
+    await chrome.tabs.update(tabId, { url })
 }
 
 /*
@@ -623,6 +651,20 @@ chrome.tabs.onRemoved.addListener((tabId) => {
     videoFrameMap.delete(tabId)
     deleteSession(tabId)
     setBadge(tabId, '')
+})
+// Chrome can swap a tab's contents for a prerendered page under a new tab id
+// (typically when navigating away from the New Tab page). Carry the room over,
+// or it is left attached to a tab that no longer exists.
+chrome.tabs.onReplaced.addListener(async (addedTabId, removedTabId) => {
+    videoFrameMap.delete(removedTabId)
+    const session = activeTabSessions.get(removedTabId)
+    if (!session) return
+    await deleteSession(removedTabId)
+    await setSession(addedTabId, session)
+    if (SOCKET?.connected) listenToEvents(addedTabId)
+    updateBadgeForRoom(session.roomName)
+    waitForVideoFrame(addedTabId)
+    scheduleStreamChange(addedTabId)
 })
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
     if (changeInfo.status === 'loading') {
@@ -967,19 +1009,25 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             } else if (resp && !resp.success) {
                 sendResponse(resp)
             } else if (message.type === 'create_room') {
+                // The video frame sends this with its media snapshot. The popup
+                // sends it directly, with a tabId and no meta, for a tab that has
+                // no video yet (or that Chrome won't let us script, like the New
+                // Tab page); the room then waits for a video to show up there.
+                const tabId = message.data?.tabId ?? sender.tab?.id
                 // Inject top-frame URL into meta
-                if (sender.tab?.id) {
-                    const topUrl = await getTopFrameUrl(sender.tab.id)
+                if (tabId != null) {
+                    const topUrl = await getTopFrameUrl(tabId)
                     if (topUrl && message.data?.meta) {
                         message.data.meta.url = topUrl
 						if (message.data.meta.media) message.data.meta.media.url = topUrl
                     }
                 }
                 const res = await createRoom(message.data)
-                if (res.success) {
-                    const tabId = sender.tab.id
+                if (res.success && tabId != null) {
 					await clearHostMedia(tabId)
-                    const frameId = videoFrameMap.get(tabId) ?? sender.frameId
+                    // Only a frame inside the tab can be its video frame; the
+                    // popup is not one.
+                    const frameId = videoFrameMap.get(tabId) ?? (sender.tab ? sender.frameId : undefined)
                     // Routing reads videoFrameMap, so the creating frame has to
                     // be in it even when the probe never ran for this tab.
                     if (frameId != null) videoFrameMap.set(tabId, frameId)
@@ -1035,7 +1083,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                     // Replay events received between join_room and
                     // setup_after_join are now safe to apply in order.
                     if (tabId != null) {
-                        flushRoomEvents(tabId)
+                        const tabUrl = await getTopFrameUrl(tabId)
+                        if (frameId == null && !isScriptableUrl(tabUrl)) {
+                            // Nothing in this tab could receive them. Keep them
+                            // for the host's page, which the snapshot replay
+                            // (if it beat the session) sends us to now.
+                            const snapshot = pendingRoomEvents
+                                .get(tabId)
+                                ?.findLast((e) => e.type === 'stream_change')
+                            if (snapshot) {
+                                await followHostFromUnscriptableTab(tabId, snapshot.data).catch(() => {})
+                            }
+                        } else {
+                            flushRoomEvents(tabId)
+                        }
                     }
                     applyUserCount(message.data.roomName, res.data?.userCount)
                 } else if (tabId != null) {

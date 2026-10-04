@@ -220,16 +220,7 @@ wc-toast-content {
 	// Whether we hold ownership of that room (null when not in a room).
 	let activeIsOwner = null
 
-	const PROTECTED_PAGE_MESSAGE = 'Open a normal webpage first. Chrome does not allow extensions to access this page.'
-	const isProtectedPageUrl = (url) => /^(chrome|edge|brave|opera|vivaldi|about|chrome-extension|moz-extension):/.test(url || '')
-	const ensureCurrentTabIsAccessible = async () => {
-		const tab = await getCurrentTab()
-		if (isProtectedPageUrl(tab?.url)) {
-			fail(PROTECTED_PAGE_MESSAGE)
-			return null
-		}
-		return tab
-	}
+	const isProtectedPageUrl = (url) => /^(chrome|chrome-search|edge|brave|opera|vivaldi|about|chrome-extension|moz-extension):/.test(url || '')
 
 	// Scans all frames for a video element and registers the frame that has one
 	const recheckVideoFrames = async () => {
@@ -353,19 +344,21 @@ wc-toast-content {
 		target.disabled = true
 		try {
 			const currRoomName = document.getElementById('new-room-name').value
-			const tab = await ensureCurrentTabIsAccessible()
+			const tab = await getCurrentTab()
 			if (!tab) return
 
-			// Auto-recheck for video before creating room
+			// A video frame creates the room with its current playback, so
+			// guests land on it straight away. Without one (no video yet, or a
+			// page like the New Tab page that extensions can't touch) the room
+			// starts empty and this tab hosts whatever video it opens next.
 			const found = await recheckVideoFrames()
-			if (!found) {
-				fail('No video found in any accessible frame.')
-				return
-			}
-
-			const result = await sendMessageToVideoFrame('create_room', currRoomName)
+			const result = found
+				? await sendMessageToVideoFrame('create_room', currRoomName)
+				: await sendMessageToBG('create_room', { roomName: currRoomName, tabId: tab.id })
 			if (result?.success) {
-				success(result.data.message)
+				success(found
+					? result.data.message
+					: `${result.data.message} Open a video in this tab to start syncing.`)
 				activeRoomName = currRoomName
 				activeIsOwner = true // creating a room always makes us its owner
 				updateRoomUserCount(currRoomName, result.data.userCount)
@@ -381,10 +374,12 @@ wc-toast-content {
 	// Shared by the main buttons and the per-room buttons in the rooms list.
 	// Returns the raw result so callers can read the acked user count.
 	const doJoinRoom = async (roomName) => {
-		const tab = await ensureCurrentTabIsAccessible()
+		const tab = await getCurrentTab()
 		if (!tab) return null
 
-		// Pre-register the video frame when the current tab allows extension access.
+		// Pre-register the video frame when the current tab allows extension
+		// access. On a page that doesn't (like the New Tab page), the
+		// background takes the tab to the host's page itself.
 		await recheckVideoFrames()
 
 		const result = await sendMessageToBG('join_room', { roomName, tabId: tab.id })

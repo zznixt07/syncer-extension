@@ -331,10 +331,11 @@ var initializeFrame = async () => {
   _initialized = true;
   const clockOffset = await estimateClockOffset();
   OFFSET_TIME_MS = clockOffset.offset;
-  currRoom = await sendMessageToBG({
+  const storedRoom = await sendMessageToBG({
     type: "get_storage",
     data: { key: CURR_ROOM_ID }
   });
+  if (currRoom == null) currRoom = storedRoom;
   currUrl = getTopURLSync();
   const prevRoomName = await getPrevRoomFromLS();
   if (prevRoomName) {

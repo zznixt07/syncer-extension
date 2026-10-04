@@ -222,10 +222,14 @@ const initializeFrame = async () => {
 	const clockOffset = await estimateClockOffset()
 	OFFSET_TIME_MS = clockOffset.offset
 
-	currRoom = await sendMessageToBG({
+	const storedRoom = await sendMessageToBG({
 		type: 'get_storage',
 		data: { key: CURR_ROOM_ID },
 	})
+	// setup_after_join can land while the awaits above are pending (it skips
+	// this function once _initialized is set) and is the fresher source, so
+	// don't clobber the room it just set with what was in storage.
+	if (currRoom == null) currRoom = storedRoom
 	currUrl = getTopURLSync()
 	const prevRoomName = await getPrevRoomFromLS()
 

@@ -818,16 +818,7 @@ wc-toast-content {
   const currentRoomName = () => document.getElementById("new-room-name").value;
   let activeRoomName = null;
   let activeIsOwner = null;
-  const PROTECTED_PAGE_MESSAGE = "Open a normal webpage first. Chrome does not allow extensions to access this page.";
-  const isProtectedPageUrl = (url2) => /^(chrome|edge|brave|opera|vivaldi|about|chrome-extension|moz-extension):/.test(url2 || "");
-  const ensureCurrentTabIsAccessible = async () => {
-    const tab2 = await getCurrentTab();
-    if (isProtectedPageUrl(tab2?.url)) {
-      fail(PROTECTED_PAGE_MESSAGE);
-      return null;
-    }
-    return tab2;
-  };
+  const isProtectedPageUrl = (url2) => /^(chrome|chrome-search|edge|brave|opera|vivaldi|about|chrome-extension|moz-extension):/.test(url2 || "");
   const recheckVideoFrames = async () => {
     const tab2 = await getCurrentTab();
     if (isProtectedPageUrl(tab2?.url)) {
@@ -931,16 +922,12 @@ wc-toast-content {
     target.disabled = true;
     try {
       const currRoomName = document.getElementById("new-room-name").value;
-      const tab2 = await ensureCurrentTabIsAccessible();
+      const tab2 = await getCurrentTab();
       if (!tab2) return;
       const found = await recheckVideoFrames();
-      if (!found) {
-        fail("No video found in any accessible frame.");
-        return;
-      }
-      const result = await sendMessageToVideoFrame("create_room", currRoomName);
+      const result = found ? await sendMessageToVideoFrame("create_room", currRoomName) : await sendMessageToBG("create_room", { roomName: currRoomName, tabId: tab2.id });
       if (result?.success) {
-        success(result.data.message);
+        success(found ? result.data.message : `${result.data.message} Open a video in this tab to start syncing.`);
         activeRoomName = currRoomName;
         activeIsOwner = true;
         updateRoomUserCount(currRoomName, result.data.userCount);
@@ -953,7 +940,7 @@ wc-toast-content {
     }
   });
   const doJoinRoom = async (roomName) => {
-    const tab2 = await ensureCurrentTabIsAccessible();
+    const tab2 = await getCurrentTab();
     if (!tab2) return null;
     await recheckVideoFrames();
     const result = await sendMessageToBG("join_room", { roomName, tabId: tab2.id });

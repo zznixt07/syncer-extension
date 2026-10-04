@@ -5,6 +5,13 @@ history for those.
 
 ## 1.2.3 - 2026-08-11
 
+### Changed
+
+- A room can be created from a tab with no video, including Chrome's New Tab
+  page. The room starts empty and the tab hosts the next video it opens.
+- A room can be joined from the New Tab page; the tab is taken straight to
+  the host's page.
+
 ### Fixed
 
 - Guests now keep the initial room replay that arrives as they join, so they
