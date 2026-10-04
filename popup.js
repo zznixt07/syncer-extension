@@ -10,7 +10,9 @@ const getCurrentTab = async () => {
 }
 
 const getCurrentTabId = async () => {
-	const tab = await getCurrentTab()
+	document.getElementById('app-version').textContent = `v${chrome.runtime.getManifest().version}`
+
+const tab = await getCurrentTab()
 	return tab.id
 }
 
