@@ -505,7 +505,8 @@ var onMediaEvent = async (result) => {
   if (!acceptOrderedPayload(data)) return;
   await sendLogToBG(`called onMediaEvent' ${result}`);
   MEDIA.setVideo(VID_ELEM);
-  if (!await MEDIA.applyRemoteState(data)) {
+  const { muted: _hostMuted, ...playback } = data.playback;
+  if (!await MEDIA.applyRemoteState({ ...data, playback })) {
     log("no video element found to act on media event");
     await sendLogToBG("no video element found to act on media event");
   }

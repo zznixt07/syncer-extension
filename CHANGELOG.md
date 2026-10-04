@@ -9,6 +9,8 @@ history for those.
 
 - A room can be created from a tab with no video, including Chrome's New Tab
   page. The room starts empty and the tab hosts the next video it opens.
+- Guests keep their own mute state. The host's mute used to be copied to every
+  guest on each play, pause and seek.
 - A room can be joined from the New Tab page; the tab is taken straight to
   the host's page.
 

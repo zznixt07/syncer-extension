@@ -440,7 +440,10 @@ const onMediaEvent = async (result) => {
 	if (!acceptOrderedPayload(data)) return
 	await sendLogToBG(`called onMediaEvent' ${result}`)
 	MEDIA.setVideo(VID_ELEM)
-	if (!(await MEDIA.applyRemoteState(data))) {
+	// Audio is each viewer's own business. Copying the host's mute re-muted a
+	// guest who had unmuted (or the reverse) on every play, pause and seek.
+	const { muted: _hostMuted, ...playback } = data.playback
+	if (!(await MEDIA.applyRemoteState({ ...data, playback }))) {
 		log('no video element found to act on media event')
 		await sendLogToBG('no video element found to act on media event')
 	}

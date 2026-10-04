@@ -61,3 +61,26 @@ test('the popup reports how many other people are in the room', async ({ newClie
 		"1 other present · you're the host"
 	)
 })
+
+test("a guest keeps its own mute state whatever the host's is", async ({ newClient }) => {
+	const room = uniqueRoom()
+	const host = await newClient('host')
+	await createRoom(host, room)
+	const guest = await newClient('guest')
+	await joinRoom(guest, room)
+
+	await host.page.evaluate(() => {
+		document.querySelector('video').muted = true
+	})
+	await guest.page.evaluate(() => {
+		document.querySelector('video').muted = false
+	})
+
+	// Each of these carries the host's state, mute included.
+	await hostPlay(host)
+	await expect.poll(async () => (await videoState(guest.page)).paused).toBe(false)
+	await hostPause(host)
+	await expect.poll(async () => (await videoState(guest.page)).paused).toBe(true)
+
+	expect((await videoState(guest.page)).muted, 'guest should still be unmuted').toBe(false)
+})
