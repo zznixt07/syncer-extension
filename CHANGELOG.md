@@ -7,6 +7,8 @@ history for those.
 
 ### Fixed
 
+- Guests now keep the initial room replay that arrives as they join, so they
+  immediately navigate to the host's current page.
 - A guest that reloads its page resumes at the host's position instead of
   sitting paused until the host's next action: the reloaded tab asks the host
   for a snapshot, and playback events arriving mid-reload are held and replayed
@@ -17,6 +19,9 @@ history for those.
   left room kept sending playback updates with no room attached.
 - Leaving a room from the popup's room list no longer wipes the room name you
   had just typed into the input.
+- Room actions immediately switch to a newly saved server address instead of
+  briefly reusing an old socket during the address-input debounce.
+- A newly created room shows up in the popup's room list right away.
 
 ## 1.2.1 — 2026-08-08
 

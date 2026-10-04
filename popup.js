@@ -369,6 +369,8 @@ wc-toast-content {
 				activeRoomName = currRoomName
 				activeIsOwner = true // creating a room always makes us its owner
 				updateRoomUserCount(currRoomName, result.data.userCount)
+				// Refresh the list so the new room shows up right away.
+				await loadRooms(target)
 			} else {
 				fail(result?.data?.message)
 			}

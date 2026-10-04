@@ -207,8 +207,8 @@ export const test = base.extend({
 			page.on('pageerror', (e) => logs.push(`[${label}] pageerror: ${e.message}`))
 			await page.goto(`${fixtureServer.origin}/player.html`)
 			await page.waitForFunction(() => document.querySelector('video')?.readyState >= 2)
-
 			const worker = await serviceWorkerOf(context)
+			worker.on('console', (m) => logs.push(`[${label} worker] ${m.type()}: ${m.text()}`))
 			const tabId = await worker.evaluate(
 				async (url) => (await chrome.tabs.query({ url }))[0]?.id,
 				`${fixtureServer.origin}/*`
@@ -255,11 +255,17 @@ const openPopup = async (context, extensionId, tabId, serverOrigin) => {
 	}, tabId)
 	await popup.goto(`chrome-extension://${extensionId}/popup.html`)
 	await popup.waitForSelector('#create-room')
+	await popup.waitForFunction(() => document.documentElement.dataset.syncerReady === 'true')
 
 	// Point the extension at this run's server before anything connects.
+	// The server field lives in the collapsed diagnostics panel in the current
+	// popup, so open it before Playwright attempts to type into the field.
+	await popup.locator('details.settings-panel > summary').click()
 	await popup.fill('#server-address', serverOrigin)
 	await expect
-		.poll(async () => await popup.evaluate(() => document.getElementById('server-address').value))
+		.poll(async () => await popup.evaluate(
+			() => chrome.runtime.sendMessage({ type: 'get_server_address' })
+		))
 		.toBe(serverOrigin)
 	return popup
 }

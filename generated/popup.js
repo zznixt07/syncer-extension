@@ -944,6 +944,7 @@ wc-toast-content {
         activeRoomName = currRoomName;
         activeIsOwner = true;
         updateRoomUserCount(currRoomName, result.data.userCount);
+        await loadRooms(target);
       } else {
         fail(result?.data?.message);
       }
