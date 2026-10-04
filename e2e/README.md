@@ -9,9 +9,10 @@ SYNCER_SERVER_DIR=/path/to/syncer-server npm run test:e2e
 SYNCER_E2E_HEADED=1 npm run test:e2e     # watch it happen
 ```
 
-The socket server is rebuilt (`npm run build`) and started on a random port for
-each worker; the fixture page is served from `e2e/fixture/` on another. Nothing
-touches port 3000 or your own Chrome profile.
+The socket server is started from its source (`index.ts`, through ts-node) on a
+random port for each worker, without writing anything into its checkout; the
+fixture page is served from `e2e/fixture/` on another. Nothing touches port
+3000, a dev server watching that checkout, or your own Chrome profile.
 
 ## How the extension gets loaded
 

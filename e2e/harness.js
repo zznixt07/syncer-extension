@@ -1,5 +1,5 @@
 import { test as base, chromium, expect } from '@playwright/test'
-import { execFileSync, spawn } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import fs from 'node:fs'
 import http from 'node:http'
@@ -85,13 +85,14 @@ const startFixtureServer = async () => {
 
 const startSyncServer = async () => {
 	const dir = resolveServerDir()
-	// dist/ is checked in but can lag index.ts; rebuild so tests run the source.
-	execFileSync('npm', ['run', 'build'], { cwd: dir, stdio: 'pipe', shell: true })
-
+	// Run the source straight through ts-node rather than rebuilding dist/ (which
+	// can lag index.ts): writing into the checkout restarts a dev server that is
+	// watching it and drops every room on it.
 	const port = 3100 + Math.floor(Math.random() * 400)
-	const proc = spawn(process.execPath, [path.join(dir, 'dist/index.js')], {
+	const proc = spawn(process.execPath, ['--require', 'ts-node/register', 'index.ts'], {
 		cwd: dir,
-		env: { ...process.env, PORT: String(port) },
+		// Type-checking is the server's own build's job; this just has to start.
+		env: { ...process.env, PORT: String(port), TS_NODE_TRANSPILE_ONLY: 'true' },
 		stdio: ['ignore', 'pipe', 'pipe'],
 	})
 	const output = []
