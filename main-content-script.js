@@ -898,6 +898,10 @@ window.addEventListener('message', async (event) => {
     port.postMessage(result)
 })
 
+// content-script.js holds the background's messages until this, so nothing
+// posted while this module was still loading is lost.
+window.postMessage({ type: 'syncer-extension-mcs-ready' }, '*')
+
 // Only auto-initialize in the top frame (for redirect/rejoin flow).
 // Subframes stay dormant until explicitly activated via a command.
 if (window.top === window.self) {

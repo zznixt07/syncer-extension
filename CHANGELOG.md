@@ -29,6 +29,10 @@ history for those.
 - Room actions immediately switch to a newly saved server address instead of
   briefly reusing an old socket during the address-input debounce.
 - A newly created room shows up in the popup's room list right away.
+- After a full page load on a heavy site like YouTube, play, pause and seek
+  sometimes stopped syncing: messages that reached the page before the
+  extension's page script had loaded were lost. They are now held until it is
+  ready.
 - A guest on a page with no video (such as a YouTube channel page the host
   passed through) now follows the host's next move instead of staying put.
 

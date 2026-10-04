@@ -248,4 +248,22 @@ test('a guest on a page with no video still follows the host', async ({
 			timeout: 30_000,
 		})
 		.toContain('player2.html')
+	await guest.page.waitForFunction(() => document.querySelector('video')?.readyState >= 2)
+
+	// Landing is only half of it: the guest has to be bound to the new page's
+	// video, or the room is on the right page and dead.
+	await hostPlay(host)
+	await expect
+		.poll(async () => (await videoState(guest.page)).paused, {
+			message: 'guest should follow play after landing',
+			timeout: 30_000,
+		})
+		.toBe(false)
+	await hostPause(host)
+	await expect
+		.poll(async () => (await videoState(guest.page)).paused, {
+			message: 'guest should follow pause after landing',
+			timeout: 30_000,
+		})
+		.toBe(true)
 })

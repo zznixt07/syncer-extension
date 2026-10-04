@@ -826,6 +826,7 @@ window.addEventListener("message", async (event) => {
   }
   port.postMessage(result);
 });
+window.postMessage({ type: "syncer-extension-mcs-ready" }, "*");
 if (window.top === window.self) {
   await initializeFrame();
 }

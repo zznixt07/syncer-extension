@@ -36,8 +36,27 @@ window.addEventListener('message', async (event) => {
 	}
 })
 
+/*
+The page script is a module that loads after this one, and on a heavy page
+(YouTube) the background can message us first, e.g. setup_after_join right
+after the video probe. A postMessage nobody is listening for is simply lost,
+leaving the frame never set up and the background waiting for a reply forever.
+So hold everything until the page script says it is listening. This listener is
+attached before the module can possibly run, so the signal can't be missed.
+*/
+let markMCSReady
+const mcsReady = new Promise((resolve) => {
+	markMCSReady = resolve
+})
+window.addEventListener('message', (event) => {
+	if (event.source === window && event.data?.type === 'syncer-extension-mcs-ready') {
+		markMCSReady()
+	}
+})
+
 // send message to script injected in the page (MAIN world)
 const sendMessageToMCS = async (message) => {
+	await mcsReady
 	log('send msg to MCS from CS', message)
 	return new Promise((resolve) => {
 		const channel = new MessageChannel()
