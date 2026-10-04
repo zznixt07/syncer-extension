@@ -3,7 +3,7 @@
 Notable changes to Syncer. Versions before 1.2.0 predate this file; see the git
 history for those.
 
-## 1.2.3 - 2026-08-11
+## 1.3.0 - 2026-10-04
 
 ### Changed
 

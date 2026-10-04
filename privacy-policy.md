@@ -1,6 +1,6 @@
 # Syncer — Privacy Policy
 
-_Last updated: 3 August 2026_
+_Last updated: 4 October 2026_
 
 Syncer keeps video playback in step between people watching the same thing. To
 do that it has to tell the other people in your room what your player is doing,
@@ -26,8 +26,11 @@ Only while you are in a room, and only for the tab you are syncing:
 
 - **The address (URL) of the page you are watching.** This is what lets the
   room follow you when you move to the next episode.
+- **The page's title and the video's length**, so the others can see what is
+  playing.
 - **Playback state:** position in the video, whether it is playing, paused or
-  buffering, playback speed, volume, and whether it is muted.
+  buffering, playback speed, and whether it is muted. (Each person's mute and
+  volume stay their own; they are not applied to anyone else.)
 - **The room name** you created or joined.
 - **On Spotify:** the track and playlist identifiers, track length and position.
 - **Timestamps**, used to measure the clock difference between participants so
@@ -36,8 +39,9 @@ Only while you are in a room, and only for the tab you are syncing:
   a disconnection.
 
 The server relays this to the other members of your room. Anyone in a room with
-you can therefore see which page you are on and what your player is doing. Only
-people who know the room name can join it.
+you can therefore see which page you are on and what your player is doing.
+Room names are not secret: anyone connected to the same server can list the
+open rooms and join one.
 
 Syncer does not send anything from tabs you are not syncing, and stops sending
 anything at all when you leave the room.
@@ -65,7 +69,7 @@ You can clear all of it by removing the extension.
 
 Syncer requests access to all websites because you may want to sync a video on
 any site. The access is used only to find the video element on the page you are
-syncing and to control it.
+syncing, to control it, and to take that tab to the page the host is watching.
 
 ## Changes
 
