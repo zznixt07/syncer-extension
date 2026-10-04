@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta charset="utf-8" />
+	<title>Syncer e2e fixture — embedded player</title>
+</head>
+<body>
+	<!-- Like a streaming site: the player is an iframe that only loads when
+	     the viewer clicks the overlay. -->
+	<button id="load-player">click to play</button>
+	<div id="slot"></div>
+	<script>
+		document.getElementById('load-player').addEventListener('click', () => {
+			const frame = document.createElement('iframe')
+			frame.id = 'player'
+			frame.src = 'player.html'
+			frame.width = 360
+			frame.height = 280
+			document.getElementById('slot').appendChild(frame)
+		})
+	</script>
+</body>
+</html>

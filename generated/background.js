@@ -3777,6 +3777,7 @@ var persistSessions = () => {
 };
 var setSession = (tabId, session) => {
   activeTabSessions.set(tabId, session);
+  if (!videoFrameMap.has(tabId)) watchForVideoFrame(tabId);
   return persistSessions();
 };
 var deleteSession = (tabId) => {
@@ -3957,10 +3958,23 @@ var waitForVideoFrame = (tabId) => {
       await new Promise((r) => setTimeout(r, NAV_VIDEO_RETRY_MS));
       if (videoFrameMap.has(tabId)) return true;
     }
+    watchForVideoFrame(tabId);
     return false;
   })().finally(() => videoFrameWaits.delete(tabId));
   videoFrameWaits.set(tabId, wait);
   return wait;
+};
+var VIDEO_WATCH_INTERVAL_MS = 2e3;
+var videoFrameWatchers = /* @__PURE__ */ new Set();
+var watchForVideoFrame = (tabId) => {
+  if (videoFrameWatchers.has(tabId)) return;
+  videoFrameWatchers.add(tabId);
+  (async () => {
+    while (activeTabSessions.has(tabId) && !videoFrameMap.has(tabId)) {
+      await new Promise((r) => setTimeout(r, VIDEO_WATCH_INTERVAL_MS));
+      if (!videoFrameWaits.has(tabId)) await probeForVideoFrame(tabId);
+    }
+  })().finally(() => videoFrameWatchers.delete(tabId));
 };
 var scheduleStreamChange = (tabId) => {
   if (!activeTabSessions.get(tabId)?.isOwner) return;
@@ -4087,6 +4101,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           if (isNewFrame && !session.isOwner && shouldRequestSnapshot(tabId)) {
             requestEventFromOwner({ roomName: session.roomName });
           }
+          if (isNewFrame && session.isOwner) scheduleStreamChange(tabId);
         }
       }
       sendResponse({ success: true });
@@ -4181,7 +4196,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         const res = await createRoom(message.data);
         if (res.success && tabId != null) {
           await clearHostMedia(tabId);
-          const frameId = videoFrameMap.get(tabId) ?? (sender.tab ? sender.frameId : void 0);
+          const frameId = videoFrameMap.get(tabId) ?? (sender.tab?.id === tabId ? sender.frameId : void 0);
           if (frameId != null) videoFrameMap.set(tabId, frameId);
           await setSession(tabId, {
             roomName: message.data.roomName,

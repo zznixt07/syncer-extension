@@ -267,3 +267,86 @@ test('a guest on a page with no video still follows the host', async ({
 		})
 		.toBe(true)
 })
+
+/*
+Streaming sites put the player in an iframe that only loads when the viewer
+clicks an overlay, often long after the page itself. The guest's tab has to
+pick that player up whenever it appears, not only in the first few seconds.
+*/
+const playerFrame = async (page) => {
+	await expect.poll(() => page.frames().some((f) => f.url().endsWith('/player.html'))).toBe(true)
+	const frame = page.frames().find((f) => f.url().endsWith('/player.html'))
+	await frame.waitForFunction(() => document.querySelector('video')?.readyState >= 2)
+	return frame
+}
+const framePaused = (frame) => frame.evaluate(() => document.querySelector('video').paused)
+
+test('a guest syncs with a player iframe that loads late', async ({ newClient, fixtureServer }) => {
+	const room = uniqueRoom()
+	const host = await newClient('host')
+	await host.page.goto(`${fixtureServer.origin}/embed.html`)
+	await host.page.click('#load-player')
+	const hostPlayer = await playerFrame(host.page)
+	await createRoom(host, room)
+
+	const guest = await newClient('guest')
+	await joinRoom(guest, room)
+	await expect
+		.poll(async () => guest.page.url(), { timeout: 30_000 })
+		.toContain('embed.html')
+
+	// Longer than the tab spends looking for a video after a load.
+	await guest.page.waitForTimeout(15_000)
+	await guest.page.click('#load-player')
+	const guestPlayer = await playerFrame(guest.page)
+
+	await hostPlayer.evaluate(() => document.querySelector('video').play())
+	await expect
+		.poll(() => framePaused(guestPlayer), {
+			message: 'guest player should follow play once it loads',
+			timeout: 30_000,
+		})
+		.toBe(false)
+	await hostPlayer.evaluate(() => document.querySelector('video').pause())
+	await expect
+		.poll(() => framePaused(guestPlayer), {
+			message: 'guest player should follow pause',
+			timeout: 30_000,
+		})
+		.toBe(true)
+})
+
+test('a host whose player iframe loads late still brings the room to it', async ({
+	newClient,
+	fixtureServer,
+}) => {
+	const room = uniqueRoom()
+	const host = await newClient('host')
+	await host.page.goto(`${fixtureServer.origin}/embed.html`)
+	await createRoom(host, room)
+
+	const guest = await newClient('guest')
+	await joinRoom(guest, room)
+
+	// Longer than the tab spends looking for a video after a load.
+	await host.page.waitForTimeout(15_000)
+	await host.page.click('#load-player')
+	const hostPlayer = await playerFrame(host.page)
+
+	await expect
+		.poll(async () => guest.page.url(), {
+			message: 'guest should be brought to the page once the host player loads',
+			timeout: 30_000,
+		})
+		.toContain('embed.html')
+	await guest.page.click('#load-player')
+	const guestPlayer = await playerFrame(guest.page)
+
+	await hostPlayer.evaluate(() => document.querySelector('video').play())
+	await expect
+		.poll(() => framePaused(guestPlayer), {
+			message: 'guest player should follow the host player',
+			timeout: 30_000,
+		})
+		.toBe(false)
+})

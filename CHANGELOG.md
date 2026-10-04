@@ -31,6 +31,10 @@ history for those.
 - Room actions immediately switch to a newly saved server address instead of
   briefly reusing an old socket during the address-input debounce.
 - A newly created room shows up in the popup's room list right away.
+- Sites whose player is an iframe that loads only after you click an overlay
+  (common on streaming sites) now sync even when you click more than a few
+  seconds after the page loads: a tab in a room keeps looking for its player
+  until it finds one.
 - After a full page load on a heavy site like YouTube, play, pause and seek
   sometimes stopped syncing: messages that reached the page before the
   extension's page script had loaded were lost. They are now held until it is

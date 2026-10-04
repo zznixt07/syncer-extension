@@ -490,6 +490,8 @@ const persistSessions = () => {
 
 const setSession = (tabId, session) => {
     activeTabSessions.set(tabId, session)
+    // Joined or created before the player loaded: find it when it does.
+    if (!videoFrameMap.has(tabId)) watchForVideoFrame(tabId)
     return persistSessions()
 }
 
@@ -743,11 +745,34 @@ const waitForVideoFrame = (tabId) => {
             await new Promise((r) => setTimeout(r, NAV_VIDEO_RETRY_MS))
             if (videoFrameMap.has(tabId)) return true
         }
+        // Too late to count for this navigation, but the video may still come.
+        watchForVideoFrame(tabId)
         return false
     })().finally(() => videoFrameWaits.delete(tabId))
 
     videoFrameWaits.set(tabId, wait)
     return wait
+}
+
+/*
+A streaming site's player is often an iframe that only loads when the viewer
+clicks an overlay, long after waitForVideoFrame has given up. Without a video
+frame nothing in the room reaches the player, so a tab in a room keeps looking,
+more slowly, for as long as it is in the room without one.
+*/
+const VIDEO_WATCH_INTERVAL_MS = 2000
+const videoFrameWatchers = new Set()
+
+const watchForVideoFrame = (tabId) => {
+    if (videoFrameWatchers.has(tabId)) return
+    videoFrameWatchers.add(tabId)
+    ;(async () => {
+        while (activeTabSessions.has(tabId) && !videoFrameMap.has(tabId)) {
+            await new Promise((r) => setTimeout(r, VIDEO_WATCH_INTERVAL_MS))
+            // The 1s loop covers the moments right after a load; don't double up.
+            if (!videoFrameWaits.has(tabId)) await probeForVideoFrame(tabId)
+        }
+    })().finally(() => videoFrameWatchers.delete(tabId))
 }
 
 /*
@@ -921,6 +946,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                     if (isNewFrame && !session.isOwner && shouldRequestSnapshot(tabId)) {
                         requestEventFromOwner({ roomName: session.roomName })
                     }
+                    // A host whose player turned up after the navigation's own
+                    // search gave up hasn't told the room about this page yet.
+                    // (Already-broadcast URLs are skipped.)
+                    if (isNewFrame && session.isOwner) scheduleStreamChange(tabId)
                 }
             }
             sendResponse({ success: true })
@@ -1040,7 +1069,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 					await clearHostMedia(tabId)
                     // Only a frame inside the tab can be its video frame; the
                     // popup is not one.
-                    const frameId = videoFrameMap.get(tabId) ?? (sender.tab ? sender.frameId : undefined)
+                    const frameId = videoFrameMap.get(tabId) ?? (sender.tab?.id === tabId ? sender.frameId : undefined)
                     // Routing reads videoFrameMap, so the creating frame has to
                     // be in it even when the probe never ran for this tab.
                     if (frameId != null) videoFrameMap.set(tabId, frameId)
