@@ -222,3 +222,30 @@ test('a guest joining from a page with no content script is taken to the host', 
 		})
 		.toBe(false)
 })
+
+/*
+The host can pass through a page whose <video> only it has: YouTube keeps the
+player element alive across its SPA navigations, so a host who goes from a
+watch page to a channel page still has one, while the guest arriving there by
+full load does not. The guest must still follow the host's next move.
+*/
+test('a guest on a page with no video still follows the host', async ({
+	newClient,
+	fixtureServer,
+}) => {
+	const { host, guest } = await twoInARoom(newClient, uniqueRoom())
+
+	await guest.page.goto(`${fixtureServer.origin}/no-video.html`)
+	// Outlast the guest's probe loop so the tab has given up looking.
+	await guest.page.waitForTimeout(14_000)
+
+	await host.page.goto(`${fixtureServer.origin}/player2.html`)
+	await host.page.waitForFunction(() => document.querySelector('video').readyState >= 2)
+
+	await expect
+		.poll(async () => guest.page.url(), {
+			message: 'guest should be pulled from its video-less page to the host',
+			timeout: 30_000,
+		})
+		.toContain('player2.html')
+})

@@ -29,6 +29,8 @@ history for those.
 - Room actions immediately switch to a newly saved server address instead of
   briefly reusing an old socket during the address-input debounce.
 - A newly created room shows up in the popup's room list right away.
+- A guest on a page with no video (such as a YouTube channel page the host
+  passed through) now follows the host's next move instead of staying put.
 
 ## 1.2.1 — 2026-08-08
 

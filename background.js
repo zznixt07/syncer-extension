@@ -425,7 +425,7 @@ const queueOrRouteRoomEvent = (tabId, type, data) => {
     const events = pendingRoomEvents.get(tabId) || []
     events.push({ type, data })
     pendingRoomEvents.set(tabId, events.slice(-MAX_PENDING_ROOM_EVENTS))
-    if (type === 'stream_change') followHostFromUnscriptableTab(tabId, data).catch(() => {})
+    if (type === 'stream_change') followHostWithoutVideoFrame(tabId, data).catch(() => {})
 }
 
 const flushRoomEvents = (tabId) => {
@@ -439,15 +439,14 @@ const flushRoomEvents = (tabId) => {
 const isScriptableUrl = (url) => /^https?:/.test(url || '')
 
 /*
-A guest on a page no content script runs in has nothing to act on
-stream_change, so follow the host from here. The events stay queued and replay
-once the new page's video frame registers.
+A guest whose page has no video frame would otherwise never hear that the host
+moved on: a page the host's player survived an SPA navigation into (a YouTube
+channel page) can have no <video> once the guest loads it fresh. The events
+stay queued either way and replay once the next page's video frame registers.
 */
-const followHostFromUnscriptableTab = async (tabId, event) => {
+const followHostWithoutVideoFrame = async (tabId, event) => {
     const session = activeTabSessions.get(tabId)
     if (!session || session.isOwner) return
-    const url = event?.data?.media?.url
-    if (!isScriptableUrl(url)) return
     let tab
     try {
         tab = await chrome.tabs.get(tabId)
@@ -455,7 +454,21 @@ const followHostFromUnscriptableTab = async (tabId, event) => {
         return
     }
     // Already on its way somewhere: its frames will register and take the queue.
-    if (tab.status === 'loading' || isScriptableUrl(tab.url)) return
+    if (tab.status === 'loading') return
+    if (isScriptableUrl(tab.url)) {
+        // The top frame's content script still runs; let it decide, as a video
+        // frame would (it knows when a URL change is the same video).
+        try {
+            await chrome.tabs.sendMessage(tabId, { type: 'stream_change', data: event }, { frameId: 0 })
+            return
+        } catch (_) {
+            // No content script after all, e.g. Chrome's own error page for a
+            // failed load. Fall through and navigate from here.
+        }
+    }
+    // Nothing runs on this page (the New Tab page), so navigate from here.
+    const url = event?.data?.media?.url
+    if (!isScriptableUrl(url)) return
     // We were sent here; don't broadcast it back if this tab later owns the room.
     lastBroadcastUrl.set(tabId, url)
     await chrome.tabs.update(tabId, { url })
@@ -1092,7 +1105,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                                 .get(tabId)
                                 ?.findLast((e) => e.type === 'stream_change')
                             if (snapshot) {
-                                await followHostFromUnscriptableTab(tabId, snapshot.data).catch(() => {})
+                                await followHostWithoutVideoFrame(tabId, snapshot.data).catch(() => {})
                             }
                         } else {
                             flushRoomEvents(tabId)

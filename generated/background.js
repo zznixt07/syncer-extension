@@ -3739,7 +3739,7 @@ var queueOrRouteRoomEvent = (tabId, type, data) => {
   const events = pendingRoomEvents.get(tabId) || [];
   events.push({ type, data });
   pendingRoomEvents.set(tabId, events.slice(-MAX_PENDING_ROOM_EVENTS));
-  if (type === "stream_change") followHostFromUnscriptableTab(tabId, data).catch(() => {
+  if (type === "stream_change") followHostWithoutVideoFrame(tabId, data).catch(() => {
   });
 };
 var flushRoomEvents = (tabId) => {
@@ -3748,18 +3748,25 @@ var flushRoomEvents = (tabId) => {
   events?.forEach(({ type, data }) => routeRoomEvent(tabId, type, data));
 };
 var isScriptableUrl = (url2) => /^https?:/.test(url2 || "");
-var followHostFromUnscriptableTab = async (tabId, event) => {
+var followHostWithoutVideoFrame = async (tabId, event) => {
   const session = activeTabSessions.get(tabId);
   if (!session || session.isOwner) return;
-  const url2 = event?.data?.media?.url;
-  if (!isScriptableUrl(url2)) return;
   let tab;
   try {
     tab = await chrome.tabs.get(tabId);
   } catch (_) {
     return;
   }
-  if (tab.status === "loading" || isScriptableUrl(tab.url)) return;
+  if (tab.status === "loading") return;
+  if (isScriptableUrl(tab.url)) {
+    try {
+      await chrome.tabs.sendMessage(tabId, { type: "stream_change", data: event }, { frameId: 0 });
+      return;
+    } catch (_) {
+    }
+  }
+  const url2 = event?.data?.media?.url;
+  if (!isScriptableUrl(url2)) return;
   lastBroadcastUrl.set(tabId, url2);
   await chrome.tabs.update(tabId, { url: url2 });
 };
@@ -4219,7 +4226,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             if (frameId == null && !isScriptableUrl(tabUrl)) {
               const snapshot = pendingRoomEvents.get(tabId)?.findLast((e) => e.type === "stream_change");
               if (snapshot) {
-                await followHostFromUnscriptableTab(tabId, snapshot.data).catch(() => {
+                await followHostWithoutVideoFrame(tabId, snapshot.data).catch(() => {
                 });
               }
             } else {
